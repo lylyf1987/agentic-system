@@ -1,0 +1,11 @@
+{
+  "workflow_summary": [
+    "[STEP: WORKFLOW_SUMMARY]",
+    "Goal: Update workflow_summary from workflow_history.",
+    "Return JSON only:",
+    "{\"workflow_summary\":\"...\"}",
+    "Requirements:",
+    "1) Briefly summarize key progress from the start to latest state.",
+    "2) State current status including progress, blockers, and next focus."
+  ]
+}

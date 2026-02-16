@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-business-system"
+version = "0.1.0"
+description = "Phase 1 scaffold for a terminal-first agentic runtime."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+agentic-system = "agentic_system.cli:main"
+
+[tool.setuptools.package-data]
+agentic_system = [
+  "skills/**/SKILL.md",
+]
