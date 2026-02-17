@@ -28,13 +28,13 @@ class RuntimeKernelTests(unittest.TestCase):
 
             self.assertTrue(isinstance(out, str))
             self.assertTrue(rt.state.full_proc_hist)
-            self.assertTrue(rt.state.llm_hist)
+            self.assertTrue(rt.state.workflow_hist)
             session_id = rt.state.session_id
             state_path = workspace / "sessions" / session_id / "state.json"
             self.assertTrue(state_path.exists())
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertTrue(payload.get("full_proc_hist"))
-            self.assertTrue(payload.get("llm_hist"))
+            self.assertTrue(payload.get("workflow_hist"))
             self.assertNotIn("system_prompts", payload)
             self.assertNotIn("agent_role_descriptions", payload)
 

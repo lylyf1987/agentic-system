@@ -61,8 +61,8 @@ class FlowEngine:
     def _ensure_runtime_fields(self, state: StorageEngine) -> None:
         if not isinstance(getattr(state, "full_proc_hist", None), list):
             state.full_proc_hist = []
-        if not isinstance(getattr(state, "llm_hist", None), list):
-            state.llm_hist = []
+        if not isinstance(getattr(state, "workflow_hist", None), list):
+            state.workflow_hist = []
         if not isinstance(getattr(state, "workflow_summary", None), str):
             state.workflow_summary = ""
         state.ensure_agent_specs(
@@ -72,7 +72,7 @@ class FlowEngine:
 
     def _summarize_workflow(self, state: StorageEngine) -> None:
         self._ensure_runtime_fields(state)
-        if not state.llm_hist:
+        if not state.workflow_hist:
             state.workflow_summary = "Session initialized and waiting for user input."
             return
 
@@ -81,7 +81,7 @@ class FlowEngine:
             self.prompt_engine.get_step_prompt("workflow_summary"),
             {
                 "workflow_summary": state.workflow_summary,
-                "workflow_history": state.llm_hist,
+                "workflow_history": state.workflow_hist,
             },
         )
         try:
@@ -377,7 +377,7 @@ class FlowEngine:
                 "action_input": {
                     "agent_role": "core_agent",
                     "workflow_summary": state.workflow_summary,
-                    "workflow_history": state.llm_hist,
+                    "workflow_history": state.workflow_hist,
                 }
             }
 

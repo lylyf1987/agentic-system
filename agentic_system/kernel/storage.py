@@ -30,7 +30,7 @@ class StorageEngine:
         self.state_path = self.session_dir / "state.json"
         # Session state fields.
         self.full_proc_hist: list[str] = []
-        self.llm_hist: list[str] = []
+        self.workflow_hist: list[str] = []
         self.workflow_summary: str = ""
 
     def load_state(self) -> bool:
@@ -53,13 +53,13 @@ class StorageEngine:
         *,
         role: str | None = None,
         text: str | None = None,
-        to_llm_hist: bool = True,
+        to_workflow_hist: bool = True,
     ) -> None:
         if role is not None:
             line = self.format_line(role, text or "")
             self.full_proc_hist.append(line)
-            if to_llm_hist:
-                self.llm_hist.append(line)
+            if to_workflow_hist:
+                self.workflow_hist.append(line)
 
     @staticmethod
     def utc_now_iso() -> str:
@@ -73,7 +73,7 @@ class StorageEngine:
         return {
             "session_id": self.session_id,
             "full_proc_hist": self.full_proc_hist,
-            "llm_hist": self.llm_hist,
+            "workflow_hist": self.workflow_hist,
             "workflow_summary": self.workflow_summary,
         }
 
@@ -85,10 +85,10 @@ class StorageEngine:
             self.session_dir.mkdir(parents=True, exist_ok=True)
             self.state_path = self.session_dir / "state.json"
         full_proc_hist = raw.get("full_proc_hist", [])
-        llm_hist = raw.get("llm_hist", [])
+        workflow_hist = raw.get("workflow_hist", raw.get("llm_hist", []))
         workflow_summary = raw.get("workflow_summary", raw.get("runtime_summary", ""))
         self.full_proc_hist = list(full_proc_hist if isinstance(full_proc_hist, list) else [])
-        self.llm_hist = list(llm_hist if isinstance(llm_hist, list) else [])
+        self.workflow_hist = list(workflow_hist if isinstance(workflow_hist, list) else [])
         self.workflow_summary = str(workflow_summary if isinstance(workflow_summary, str) else "")
 
     # Compatibility methods kept for current orchestrator contract.

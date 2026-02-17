@@ -83,7 +83,7 @@ class AgentRuntime:
                 f"session_id={self.state.session_id}",
                 f"mode={self.mode}",
                 f"full_proc_hist_lines={len(self.state.full_proc_hist)}",
-                f"llm_hist_lines={len(self.state.llm_hist)}",
+                f"workflow_hist_lines={len(self.state.workflow_hist)}",
                 f"active_task={active_task.get('task_id') if isinstance(active_task, dict) else None}",
                 f"workflow_summary={workflow_summary if isinstance(workflow_summary, str) else ''}",
             ]
