@@ -27,17 +27,6 @@ _REQUIRED_STEPS = (
     "stm_compaction",
     "workflow_summary",
 )
-_WORKFLOW_SUMMARY_DEFAULT = "\n".join(
-    [
-        "[STEP: WORKFLOW_SUMMARY]",
-        "Goal: Update workflow_summary from workflow_history.",
-        "Return JSON only:",
-        '{"workflow_summary":"..."}',
-        "Requirements:",
-        "1) Briefly summarize key progress from the start to latest state.",
-        "2) State current status including progress, blockers, and next focus.",
-    ]
-)
 
 
 class PromptEngine:
@@ -100,18 +89,16 @@ class PromptEngine:
         prompt = prompts.get(step, "")
         if isinstance(prompt, str) and prompt.strip():
             return prompt
-        if step == "workflow_summary":
-            return _WORKFLOW_SUMMARY_DEFAULT
-        return f"[STEP: {step.upper()}]\nGoal: Execute this step."
+        return ""
 
     @staticmethod
     def build_prompt(system_prompt: str | None, step_prompt: str, input_payload: dict[str, Any]) -> str:
         sections: list[str] = []
         if isinstance(system_prompt, str) and system_prompt.strip():
-            sections.append("System directives:\n" + system_prompt.strip())
-        sections.append("Step directives:\n" + str(step_prompt).strip())
+            sections.append(str(system_prompt).strip())
+        sections.append(str(step_prompt).strip())
 
-        workflow_summary = input_payload.get("workflow_summary", input_payload.get("runtime_summary"))
+        workflow_summary = input_payload.get("workflow_summary")
         workflow_history = input_payload.get("workflow_history")
         if workflow_summary is not None or workflow_history is not None:
             text_blocks: list[str] = []
@@ -203,7 +190,7 @@ STEP_PROMPTS = {
     name: (
         _RAW_STEP_PROMPTS[name]
         if isinstance(_RAW_STEP_PROMPTS.get(name), str) and _RAW_STEP_PROMPTS[name].strip()
-        else (_WORKFLOW_SUMMARY_DEFAULT if name == "workflow_summary" else f"[STEP: {name.upper()}]\nGoal: Execute this step.")
+        else ""
     )
     for name in _REQUIRED_STEPS
 }

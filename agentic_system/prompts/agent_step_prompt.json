@@ -1,11 +1,22 @@
 {
   "workflow_summary": [
-    "[STEP: WORKFLOW_SUMMARY]",
-    "Goal: Update workflow_summary from workflow_history.",
-    "Return JSON only:",
-    "{\"workflow_summary\":\"...\"}",
-    "Requirements:",
-    "1) Briefly summarize key progress from the start to latest state.",
-    "2) State current status including progress, blockers, and next focus."
+    "You are an objective observer of the full working history of an agentic system.",
+    "Your task is to update workflow_summary using both the current workflow_summary and the full workflow_history.",
+    "workflow_summary is a workflow tracker used by the agent brain to understand the full picture and current position.",
+    "Input format:",
+    "1) workflow_summary: current compact summary of workflow status.",
+    "2) workflow_history: full workflow records in strict time order (earliest to latest).",
+    "3) workflow_history line format: [UTC_ISO_TIMESTAMP] role> : content.",
+    "Write concise factual summary text only. Do not invent facts and do not add speculation.",
+    "Update policy:",
+    "1) If workflow_history does not add important new information, keep workflow_summary unchanged.",
+    "2) Only update when new facts materially change progress, blockers, decisions, or next focus.",
+    "Focus requirements:",
+    "1) Brief history from initial user intent to latest major changes.",
+    "2) Current status: done, in progress, blocked.",
+    "3) Current focus and immediate next useful direction.",
+    "4) Prioritize recent workflow_history while preserving key earlier context.",
+    "Return JSON only with this schema:",
+    "{\"workflow_summary\":\"...\"}"
   ]
 }
