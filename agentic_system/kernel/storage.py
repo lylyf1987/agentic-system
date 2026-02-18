@@ -45,30 +45,24 @@ class StorageEngine:
 
     def update_state(
         self,
-        *,
-        role: str | None = None,
-        text: str | None = None,
-        to_workflow_hist: bool = True,
-        prompt_engine: Any | None = None,
-        model_router: Any | None = None,
+        role: str,
+        text: str,
+        prompt_engine: Any,
+        model_router: Any,
     ) -> None:
-        if role is not None:
-            line = self.format_line(role, text or "")
-            self.full_proc_hist.append(line)
-            if to_workflow_hist:
-                self.workflow_hist.append(line)
-
-        if not self.workflow_hist:
-            return
-        
-        if prompt_engine is None or model_router is None:
-            return
+        line = self._format_line(role, text or "")
+        self.full_proc_hist.append(line)
+        self.workflow_hist.append(line)
 
         try:
-            out = model_router.generate(
+            final_prompt = prompt_engine.build_prompt(
                 role="workflow_summarizer",
                 state=self,
-                prompt_engine=prompt_engine,
+                model_router=model_router,
+            )
+            out = model_router.generate(
+                role="workflow_summarizer",
+                final_prompt=final_prompt,
             )
             if not isinstance(out, dict):
                 return
@@ -83,7 +77,7 @@ class StorageEngine:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     @classmethod
-    def format_line(cls, role: str, text: str) -> str:
+    def _format_line(cls, role: str, text: str) -> str:
         return f"[{cls.utc_now_iso()}] {role}> : {text}"
 
     def _serialize_state(self) -> dict[str, Any]:

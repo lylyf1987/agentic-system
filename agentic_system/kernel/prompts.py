@@ -13,9 +13,9 @@ class PromptEngine:
         [
             "You are an objective observer of the full working history of an agentic system.",
             "Your task is to update workflow_summary using both the current workflow_summary and the full workflow_history.",
-            "workflow_summary is a workflow tracker used by the agent brain to understand the full picture and current position.",
             "Input format:",
             "1) workflow_summary: current compact summary of workflow status.",
+            "    - workflow_summary is a workflow tracker used by the agent brain to understand the full picture and current position.",
             "2) workflow_history: full workflow records in strict time order (earliest to latest).",
             "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> : content.",
             "Write concise factual summary text only. Do not invent facts and do not add speculation.",
@@ -27,9 +27,9 @@ class PromptEngine:
             "2) Current status: done, in progress, blocked.",
             "3) Current focus and immediate next useful direction.",
             "4) Prioritize recent workflow_history while preserving key earlier context.",
+            "Output format:",
             "Return one JSON object wrapped in <output> and </output>.",
             "Do not output any text outside that block.",
-            "Schema inside the block:",
             "{\"workflow_summary\":\"...\"}",
             "Example:",
             "<output>",
@@ -37,8 +37,40 @@ class PromptEngine:
             "</output>",
         ]
     )
+    WORKFLOW_COMPACTOR_PROMPT = "\n".join(
+        [
+            "You are an objective observer compressing older workflow records for runtime memory control.",
+            "Your task is to compact workflow_history into ONE concise chronological text block while preserving key facts.",
+            "Use workflow_summary only as context support.",
+            "Input format:",
+            "1) workflow_summary: current compact summary of workflow status.",
+            "    - workflow_summary is a workflow tracker used by the agent to understand the full picture and current position.",
+            "2) workflow_history: older workflow records in strict time order (earliest to latest).",
+            "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> : content.",
+            "Compression target:",
+            "- Output ONE paragraph string, no bullets, no newlines, no markdown, no JSON inside the string.",
+            "- Keep it factual and chronological.",
+            "- Keep major decisions, actions with outcomes, blockers, and unresolved loops.",
+            "- Exclude advice, speculation, and future planning.",
+            "- Keep it compact; target <= 1200 characters.",
+            "Output format:",
+            "Return one JSON object wrapped in <output> and </output>.",
+            "Do not output any text outside that block.",
+            "{\"workflow_hist_compact\":\"...\"}",
+            "Example:",
+            "<output>",
+            "{\"workflow_hist_compact\":\"...\"}",
+            "</output>",
+        ]
+    )
 
-    def __init__(self, workspace: str | Path, packaged_root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        packaged_root: str | Path | None = None,
+        token_window_limit: int = 12000,
+        compact_keep_last_k: int = 10,
+    ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.runtime_prompts_root = self.workspace / "prompts"
         self.packaged_root = (
@@ -46,6 +78,8 @@ class PromptEngine:
             if packaged_root
             else Path(__file__).resolve().parents[1] / "prompts"
         )
+        self.token_window_limit = int(token_window_limit)
+        self.compact_keep_last_k = max(1, int(compact_keep_last_k))
         self.system_prompts_path = self.runtime_prompts_root / "agent_system_prompt.json"
         self.legacy_system_prompts_path = self.runtime_prompts_root / "agent_systemp_prompt.json"
         self.agent_role_descriptions_path = self.runtime_prompts_root / "agent_role_description.json"
@@ -153,10 +187,13 @@ class PromptEngine:
             payload[key.strip()] = value.strip()
         return payload
 
-    def _get_system_prompt(self, agent_role: str) -> str:
-        role = str(agent_role).strip()
+    def _get_system_prompt(self, role: str) -> str:
+        role = str(role).strip()
         if role == "workflow_summarizer":
             return self.WORKFLOW_SUMMARIZER_PROMPT
+        
+        if role == "workflow_history_compactor":
+            return self.WORKFLOW_COMPACTOR_PROMPT
 
         prompts = self._load_system_prompts()
         selected = prompts.get(role, "") if role else ""
@@ -185,32 +222,88 @@ class PromptEngine:
             text = text + "\n\n" + skills_section
         return text
 
+    def _compact_workflow_history(
+        self,
+        role: str,
+        state: Any, 
+        compact_keep_last_k: int,
+        model_router: Any,
+    ) -> None:
+        head = state.workflow_hist[:-compact_keep_last_k] if compact_keep_last_k < len(state.workflow_hist) else []
+        tail = state.workflow_hist[-compact_keep_last_k:] if compact_keep_last_k > 0 else []
+        workflow_summary = state.workflow_summary if isinstance(state.workflow_summary, str) else ""
+        system_prompt = self._get_system_prompt(role)
+        sections: list[str] = []
+        if system_prompt.strip():
+            sections.append(system_prompt.strip())
+        sections.append(
+            "\n".join(
+                [
+                    "Workflow Summary:",
+                    workflow_summary if workflow_summary else "(empty)",
+                    "Workflow History:",
+                    "\n".join(head) if head else "(empty)",
+                ]
+            )
+        )
+        final_prompt = "\n\n".join(sections)
+        response = model_router.generate(
+            role="workflow_history_compactor",
+            final_prompt=final_prompt
+        )
+        workflow_hist_compact = str(response.get("workflow_hist_compact", ""))
+        state.workflow_hist = [f"[{state.utc_now_iso()}] workflow_compactor> : {workflow_hist_compact}"] + tail
+
     def build_prompt(
         self,
-        agent_role: str,
-        input_payload: dict[str, Any],
+        role: str,
+        state: Any | None = None,
+        model_router: Any | None = None,
     ) -> str:
-        system_prompt = self._get_system_prompt(agent_role)
+        system_prompt = self._get_system_prompt(role)
+        workflow_summary = str(getattr(state, "workflow_summary", "")).strip()
+        workflow_history: list[str] = getattr(state, "workflow_hist", [])
+        workflow_history_lines = [line for line in workflow_history if line.strip()]
         sections: list[str] = []
-        if isinstance(system_prompt, str) and system_prompt.strip():
-            sections.append(str(system_prompt).strip())
+        if system_prompt.strip():
+            sections.append(system_prompt.strip())
+        sections.append(
+            "\n".join(
+                [
+                    "Workflow Summary:",
+                    workflow_summary if workflow_summary else "(empty)",
+                    "Workflow History:",
+                    "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
+                ]
+            )
+        )
+        final_prompt = "\n\n".join(sections)
+        estimated_tokens = max(1, len(final_prompt) // 4)
+        rounds = 0
+        while rounds < 3 and estimated_tokens > self.token_window_limit:
+            self._compact_workflow_history(
+                role="workflow_history_compactor",
+                state=state, 
+                compact_keep_last_k=self.compact_keep_last_k, 
+                model_router=model_router
+            )
+            workflow_history: list[str] = getattr(state, "workflow_hist", [])
+            workflow_history_lines = [line for line in workflow_history if line.strip()]
+            sections: list[str] = []
+            if system_prompt.strip():
+                sections.append(system_prompt.strip())
+            sections.append(
+                "\n".join(
+                    [
+                        "Workflow Summary:",
+                        workflow_summary if workflow_summary else "(empty)",
+                        "Workflow History:",
+                        "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
+                    ]
+                )
+            )
+            final_prompt = "\n\n".join(sections)
+            estimated_tokens = max(1, len(final_prompt) // 4)
+            rounds += 1
 
-        workflow_summary = input_payload.get("workflow_summary")
-        workflow_history = input_payload.get("workflow_history")
-        if workflow_summary is not None or workflow_history is not None:
-            text_blocks: list[str] = []
-            if workflow_summary is not None:
-                summary_text = str(workflow_summary).strip()
-                text_blocks.append("Workflow Summary:")
-                text_blocks.append(summary_text if summary_text else "(empty)")
-            if workflow_history is not None:
-                if isinstance(workflow_history, list):
-                    history_text = "\n".join(str(line) for line in workflow_history)
-                else:
-                    history_text = str(workflow_history)
-                history_text = history_text.strip()
-                text_blocks.append("Workflow History:")
-                text_blocks.append(history_text if history_text else "(empty)")
-            sections.append("\n".join(text_blocks))
-
-        return "\n\n".join(sections)
+        return final_prompt

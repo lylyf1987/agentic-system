@@ -37,13 +37,12 @@ class FlowEngine:
 
     def _run_sub_agent_loop(
         self,
+        role: str,
         state: StorageEngine,
-        *,
-        agent_role: str,
         model_router: ModelRouter,
         prompt_engine: PromptEngine,
     ) -> None:
-        role = str(agent_role).strip()
+        role = str(role).strip()
         if not role:
             text = "chat_with_sub_agent requires action_input.agent_role"
         else:
@@ -67,10 +66,14 @@ class FlowEngine:
         turns = 0
 
         self._ensure_runtime_fields(state)
-        response = model_router.generate(
+        final_prompt = prompt_engine.build_prompt(
             role="core_agent",
             state=state,
-            prompt_engine=prompt_engine,
+            model_router=model_router,
+        )
+        response = model_router.generate(
+            role="core_agent",
+            final_prompt=final_prompt
         )
         state.update_state(
             role="core_agent",
@@ -120,6 +123,8 @@ class FlowEngine:
                             prompt_engine=prompt_engine,
                             model_router=model_router,
                         )
+                        state.save_state()
+
                     except Exception as exc:
                         state.update_state(
                             role="runtime",
@@ -127,7 +132,7 @@ class FlowEngine:
                             prompt_engine=prompt_engine,
                             model_router=model_router,
                         )
-                    state.save_state()
+                        state.save_state()
             else:
                 state.update_state(
                     role="runtime",
@@ -138,10 +143,14 @@ class FlowEngine:
                 state.save_state()
 
             self._ensure_runtime_fields(state)
-            response = model_router.generate(
+            final_prompt = prompt_engine.build_prompt(
                 role="core_agent",
                 state=state,
-                prompt_engine=prompt_engine,
+                model_router=model_router,
+            )
+            response = model_router.generate(
+                role="core_agent",
+                final_prompt=final_prompt
             )
             state.update_state(
                 role="core_agent",

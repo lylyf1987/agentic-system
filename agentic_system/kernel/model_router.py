@@ -211,33 +211,14 @@ class ModelRouter:
 
     def generate(
         self,
-        role: str,
-        state: Any,
-        prompt_engine: Any,
+        role: str = "core_agent",
+        final_prompt: str | None = None,
     ) -> dict[str, Any]:
-        role_name = str(role).strip()
-        if not role_name:
-            return {}
-        if prompt_engine is None:
-            return {}
-        try:
-            final_prompt = prompt_engine.build_prompt(
-                agent_role=role_name,
-                input_payload={
-                    "workflow_summary": getattr(state, "workflow_summary", ""),
-                    "workflow_history": getattr(state, "workflow_hist", []),
-                },
-            )
-        except Exception:
-            return {}
-        if not isinstance(final_prompt, str) or not final_prompt.strip():
-            return {}
-
-        model = self._select_model(role_name)
+        model = self._select_model(role)
         adapter = self.adapters[self.provider]
         response = adapter.generate(
             model=model,
-            prompt=final_prompt,
+            prompt=final_prompt
         )
         payload = self._parse_json_payload(response.text or "")
         if isinstance(payload, dict):
