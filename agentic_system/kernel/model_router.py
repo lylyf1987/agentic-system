@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -14,17 +14,6 @@ class ModelResponse:
     provider: str
     model: str
     text: str
-
-
-class ModelAdapter(Protocol):
-    provider: str
-
-    def generate(
-        self,
-        model: str,
-        prompt: str,
-    ) -> ModelResponse:
-        ...
 
 
 def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: int = 60) -> dict[str, Any]:
@@ -44,67 +33,6 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeo
         raise RuntimeError(f"Network error: {exc}") from exc
 
 
-class OpenAIAdapter:
-    provider = "openai"
-
-    def __init__(self) -> None:
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
-        base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        self.endpoint = f"{base}/chat/completions"
-
-    def generate(
-        self,
-        model: str,
-        prompt: str,
-    ) -> ModelResponse:
-        if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
-        messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
-        payload = {"model": model, "messages": messages, "temperature": 0.2}
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        data = _post_json(self.endpoint, headers, payload)
-        content = data["choices"][0]["message"]["content"]
-        if isinstance(content, list):
-            text = "".join(block.get("text", "") for block in content if isinstance(block, dict))
-        else:
-            text = str(content)
-        return ModelResponse(provider=self.provider, model=model, text=text)
-
-
-class AnthropicAdapter:
-    provider = "anthropic"
-
-    def __init__(self) -> None:
-        self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        self.endpoint = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
-        self.version = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
-
-    def generate(
-        self,
-        model: str,
-        prompt: str,
-    ) -> ModelResponse:
-        if not self.api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        payload: dict[str, Any] = {
-            "model": model,
-            "max_tokens": 1024,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": self.version,
-            "Content-Type": "application/json",
-        }
-        data = _post_json(self.endpoint, headers, payload)
-        blocks = data.get("content", [])
-        text = "".join(block.get("text", "") for block in blocks if isinstance(block, dict))
-        return ModelResponse(provider=self.provider, model=model, text=text)
-
-
 class OllamaAdapter:
     provider = "ollama"
 
@@ -115,11 +43,7 @@ class OllamaAdapter:
         keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "").strip()
         self.keep_alive = keep_alive or None
 
-    def generate(
-        self,
-        model: str,
-        prompt: str,
-    ) -> ModelResponse:
+    def generate(self, model: str, prompt: str) -> ModelResponse:
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
@@ -137,57 +61,25 @@ class OllamaAdapter:
 
 
 class ModelRouter:
-    def __init__(self, provider: str | None = None, model_name: str | None = None) -> None:
-        token = (provider or os.getenv("AGENTIC_MODEL_PROVIDER", "openai")).strip().lower()
-        if token == "claude":
-            token = "anthropic"
-        if token not in {"openai", "anthropic", "ollama"}:
-            raise ValueError("model_provider must be one of: openai, claude, ollama")
-
-        self.provider = token
-        self.model_name = model_name
-        self.adapters: dict[str, ModelAdapter] = {
-            "openai": OpenAIAdapter(),
-            "anthropic": AnthropicAdapter(),
-            "ollama": OllamaAdapter(),
+    def __init__(self, model_name: str | None = None) -> None:
+        self.provider = "ollama"
+        self.adapter = OllamaAdapter()
+        core_model = model_name or os.getenv(
+            "OLLAMA_MODEL_CORE_AGENT",
+            os.getenv("OLLAMA_MODEL_THINKING", "llama3.1:8b"),
+        )
+        summarizer_model = os.getenv("OLLAMA_MODEL_WORKFLOW_SUMMARIZER", core_model)
+        self.models: dict[str, str] = {
+            "core_agent": core_model,
+            "workflow_summarizer": summarizer_model,
+            "workflow_history_compactor": summarizer_model,
         }
-        self.provider_defaults: dict[str, dict[str, str]] = {
-            "openai": {
-                "core_agent": os.getenv("OPENAI_MODEL_CORE_AGENT", os.getenv("OPENAI_MODEL_THINKING", "gpt-4o-mini")),
-                "workflow_summarizer": os.getenv(
-                    "OPENAI_MODEL_WORKFLOW_SUMMARIZER",
-                    os.getenv("OPENAI_MODEL_THINKING", "gpt-4o-mini"),
-                ),
-            },
-            "anthropic": {
-                "core_agent": os.getenv(
-                    "ANTHROPIC_MODEL_CORE_AGENT",
-                    os.getenv("ANTHROPIC_MODEL_THINKING", "claude-3-5-sonnet-latest"),
-                ),
-                "workflow_summarizer": os.getenv(
-                    "ANTHROPIC_MODEL_WORKFLOW_SUMMARIZER",
-                    os.getenv("ANTHROPIC_MODEL_THINKING", "claude-3-5-sonnet-latest"),
-                ),
-            },
-            "ollama": {
-                "core_agent": os.getenv("OLLAMA_MODEL_CORE_AGENT", os.getenv("OLLAMA_MODEL_THINKING", "llama3.1:8b")),
-                "workflow_summarizer": os.getenv(
-                    "OLLAMA_MODEL_WORKFLOW_SUMMARIZER",
-                    os.getenv("OLLAMA_MODEL_THINKING", "llama3.1:8b"),
-                ),
-            },
-        }
-        if model_name:
-            self.provider_defaults[self.provider]["core_agent"] = model_name
-            self.provider_defaults[self.provider]["workflow_summarizer"] = model_name
 
     def _select_model(self, role: str) -> str:
-        if self.model_name:
-            return self.model_name
         role_name = str(role).strip()
-        if role_name in self.provider_defaults[self.provider]:
-            return self.provider_defaults[self.provider][role_name]
-        return self.provider_defaults[self.provider]["core_agent"]
+        if role_name in self.models:
+            return self.models[role_name]
+        return self.models["core_agent"]
 
     @staticmethod
     def _parse_json_payload(text: str) -> dict[str, Any] | None:
@@ -214,11 +106,13 @@ class ModelRouter:
         role: str = "core_agent",
         final_prompt: str | None = None,
     ) -> dict[str, Any]:
+        prompt = str(final_prompt or "").strip()
+        if not prompt:
+            return {}
         model = self._select_model(role)
-        adapter = self.adapters[self.provider]
-        response = adapter.generate(
+        response = self.adapter.generate(
             model=model,
-            prompt=final_prompt
+            prompt=prompt,
         )
         payload = self._parse_json_payload(response.text or "")
         if isinstance(payload, dict):

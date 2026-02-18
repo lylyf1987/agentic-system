@@ -17,11 +17,21 @@ class FlowEngine:
         self,
         workspace: str | Path,
         mode: str,
+        model_router: ModelRouter | None = None,
+        prompt_engine: PromptEngine | None = None,
+        skill_engine: Any | None = None,
+        knowledge_engine: Any | None = None,
+        policy_engine: Any | None = None,
         approval_handler: Callable[[str], tuple[bool, str]] | None = None,
         limits: dict[str, int] | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.mode = mode
+        self.model_router = model_router
+        self.prompt_engine = prompt_engine
+        self.skill_engine = skill_engine
+        self.knowledge_engine = knowledge_engine
+        self.policy_engine = policy_engine
         self.approval_handler = approval_handler
         self.limits = deepcopy(DEFAULT_LIMITS)
         if limits:
@@ -35,33 +45,33 @@ class FlowEngine:
         if not isinstance(getattr(state, "workflow_summary", None), str):
             state.workflow_summary = ""
 
-    def _run_sub_agent_loop(
-        self,
-        role: str,
-        state: StorageEngine,
-        model_router: ModelRouter,
-        prompt_engine: PromptEngine,
-    ) -> None:
-        role = str(role).strip()
-        if not role:
-            text = "chat_with_sub_agent requires action_input.agent_role"
-        else:
-            text = f"sub-agent loop placeholder for role '{role}'"
-        state.update_state(
-            role="runtime",
-            text=text,
-            prompt_engine=prompt_engine,
-            model_router=model_router,
+    def _confirm_exec(self, action_input: dict[str, Any]) -> bool:
+        if self.approval_handler is None:
+            return True
+        signature = json.dumps(
+            {
+                "action": "exec",
+                "code_type": str(action_input.get("code_type", "bash")).strip().lower(),
+                "script_path": str(action_input.get("script_path", "")).strip(),
+                "script_preview": str(action_input.get("script", "")).strip()[:240],
+            },
+            ensure_ascii=True,
         )
-        state.save_state()
+        try:
+            allowed, _scope = self.approval_handler(signature)
+            return bool(allowed)
+        except Exception:
+            return False
 
     def _run_core_agent_loop(
         self,
         state: StorageEngine,
-        *,
-        model_router: ModelRouter,
-        prompt_engine: PromptEngine,
     ) -> None:
+        model_router = self.model_router
+        prompt_engine = self.prompt_engine
+        if model_router is None or prompt_engine is None:
+            raise RuntimeError("FlowEngine requires model_router and prompt_engine to run")
+
         max_turns = int(self.limits.get("max_inner_turns", 60))
         turns = 0
 
@@ -90,13 +100,13 @@ class FlowEngine:
             if action == "chat_with_requester":
                 break
             elif action == "chat_with_sub_agent":
-                agent_role = str(action_input.get("agent_role", "")).strip()
-                self._run_sub_agent_loop(
-                    state=state,
-                    agent_role=agent_role,
-                    model_router=model_router,
+                state.update_state(
+                    role="runtime",
+                    text="chat_with_sub_agent is disabled in current runtime",
                     prompt_engine=prompt_engine,
+                    model_router=model_router,
                 )
+                state.save_state()
             elif action == "exec":
                 if not isinstance(action_input, dict):
                     state.update_state(
@@ -107,6 +117,15 @@ class FlowEngine:
                     )
                     state.save_state()
                 else:
+                    if not self._confirm_exec(action_input):
+                        state.update_state(
+                            role="runtime",
+                            text="exec denied by requester",
+                            prompt_engine=prompt_engine,
+                            model_router=model_router,
+                        )
+                        state.save_state()
+                        continue
                     code_type = str(action_input.get("code_type", "bash")).strip().lower()
                     script_path = str(action_input.get("script_path", "")).strip()
                     script = str(action_input.get("script", "")).strip()
@@ -175,13 +194,12 @@ class FlowEngine:
         self,
         state: StorageEngine,
         command_handler: Callable[[str], str] | None = None,
-        *,
-        model_router: ModelRouter,
-        prompt_engine: PromptEngine,
-        skill_engine: Any | None = None,
-        knowledge_engine: Any | None = None,
-        policy_engine: Any | None = None,
     ) -> None:
+        model_router = self.model_router
+        prompt_engine = self.prompt_engine
+        if model_router is None or prompt_engine is None:
+            raise RuntimeError("FlowEngine requires model_router and prompt_engine to run")
+
         while True:
             try:
                 line = input("user> ")
@@ -214,6 +232,4 @@ class FlowEngine:
             state.save_state()
             self._run_core_agent_loop(
                 state,
-                model_router=model_router,
-                prompt_engine=prompt_engine,
             )

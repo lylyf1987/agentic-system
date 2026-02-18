@@ -16,11 +16,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Runtime workspace path (absolute or relative).",
     )
     parser.add_argument(
-        "--model-provider",
+        "--model-name",
         default=None,
-        choices=["openai", "claude", "ollama"],
+        help="Ollama model name override (defaults from OLLAMA_MODEL_CORE_AGENT/OLLAMA_MODEL_THINKING).",
     )
-    parser.add_argument("--model-name", default=None)
     return parser
 
 
@@ -33,7 +32,6 @@ def main() -> int:
         workspace=workspace,
         mode=args.mode,
         session_id=args.session_id,
-        model_provider=args.model_provider,
         model_name=args.model_name,
     )
     return runtime.start()

@@ -19,7 +19,6 @@ class AgentRuntime:
         workspace: str | Path,
         mode: str = "safe",
         session_id: str | None = None,
-        model_provider: str | None = None,
         model_name: str | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
@@ -28,10 +27,7 @@ class AgentRuntime:
         self.state = StorageEngine(workspace=self.workspace, session_id=session_id)
         if session_id is not None:
             self.state.load_state()
-        self.model_router = ModelRouter(
-            provider=model_provider,
-            model_name=model_name,
-        )
+        self.model_router = ModelRouter(model_name=model_name)
         self.skill_engine = SkillEngine(workspace=self.workspace)
         self.prompt_engine = PromptEngine(workspace=self.workspace)
         self.knowledge = KnowledgeEngine(workspace=self.workspace)
@@ -39,6 +35,11 @@ class AgentRuntime:
         self.engine = FlowEngine(
             workspace=self.workspace,
             mode=self.mode,
+            model_router=self.model_router,
+            prompt_engine=self.prompt_engine,
+            skill_engine=self.skill_engine,
+            knowledge_engine=self.knowledge,
+            policy_engine=self.policy,
             approval_handler=self._default_approval_prompt,
         )
 
@@ -47,17 +48,12 @@ class AgentRuntime:
     @staticmethod
     def _default_approval_prompt(signature: str) -> tuple[bool, str]:
         print()
-        print(f"Policy gate: {signature}")
-        print("Choose: [n] deny, [y] once, [s] session, [p] pattern, [a] always")
+        print("Runtime confirmation required for exec action.")
+        print(signature)
+        print("Approve this execution? [y/N]")
         choice = input("> ").strip().lower()
         if choice in {"y", "yes", "once"}:
             return True, "once"
-        if choice in {"s", "session"}:
-            return True, "session"
-        if choice in {"p", "pattern"}:
-            return True, "pattern"
-        if choice in {"a", "always"}:
-            return True, "always"
         return False, "deny"
 
     def _help_text(self) -> str:
@@ -108,11 +104,6 @@ class AgentRuntime:
             self.engine.run_session(
                 state=self.state,
                 command_handler=self._handle_command,
-                model_router=self.model_router,
-                prompt_engine=self.prompt_engine,
-                skill_engine=self.skill_engine,
-                knowledge_engine=self.knowledge,
-                policy_engine=self.policy,
             )
             return 0
         finally:
