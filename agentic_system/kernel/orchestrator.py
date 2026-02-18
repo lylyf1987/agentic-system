@@ -76,9 +76,27 @@ class FlowEngine:
         return raw_response, action, action_input
 
     @staticmethod
-    def _stream_to_stdout(token: str) -> None:
-        if token:
+    def _build_stream_printer(role: str) -> tuple[Callable[[str], None], Callable[[str], None]]:
+        role_name = str(role).strip() or "assistant"
+        started = {"value": False}
+
+        def on_token(token: str) -> None:
+            if not token:
+                return
+            if not started["value"]:
+                print(f"{role_name}> ", end="", flush=True)
+                started["value"] = True
             print(token, end="", flush=True)
+
+        def finish(raw_response: str) -> None:
+            if started["value"]:
+                print()
+                return
+            text = str(raw_response or "").strip()
+            if text:
+                print(f"{role_name}> {text}")
+
+        return on_token, finish
 
     def _run_core_agent_loop(
         self,
@@ -98,14 +116,15 @@ class FlowEngine:
             state=state,
             model_router=model_router,
         )
+        on_chunk, finish_stream = self._build_stream_printer("core_agent")
 
         response = model_router.generate(
             role="core_agent",
             final_prompt=final_prompt,
-            raw_response_callback=self._stream_to_stdout,
+            raw_response_callback=on_chunk,
         )
-        print()
         raw_response, action, action_input = self._normalize_llm_response(response)
+        finish_stream(raw_response)
         state.update_state(
             role="core_agent",
             text=raw_response,
@@ -186,14 +205,15 @@ class FlowEngine:
                 state=state,
                 model_router=model_router,
             )
+            on_chunk, finish_stream = self._build_stream_printer("core_agent")
 
             response = model_router.generate(
                 role="core_agent",
                 final_prompt=final_prompt,
-                raw_response_callback=self._stream_to_stdout,
+                raw_response_callback=on_chunk,
             )
-            print()
             raw_response, action, action_input = self._normalize_llm_response(response)
+            finish_stream(raw_response)
             state.update_state(
                 role="core_agent",
                 text=raw_response,

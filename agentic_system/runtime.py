@@ -63,14 +63,16 @@ class AgentRuntime:
             [
                 "Commands:",
                 "  /help            Show help.",
-                "  /status          Show runtime status.",
+                "  /status          Show runtime status overview.",
+                "  /status workflow_summary   Show workflow_summary.",
+                "  /status workflow_hist      Show workflow_hist lines.",
+                "  /status full_proc_hist     Show full_proc_hist lines.",
                 "  /refresh         Start a new session in current workspace.",
                 "  /exit            Quit.",
             ]
         )
 
-    def _status_text(self) -> str:
-        workflow_summary = getattr(self.state, "workflow_summary", "")
+    def _status_overview_text(self) -> str:
         return "\n".join(
             [
                 f"session_id={self.state.session_id}",
@@ -78,9 +80,25 @@ class AgentRuntime:
                 f"mode={self.mode}",
                 f"full_proc_hist_lines={len(self.state.full_proc_hist)}",
                 f"workflow_hist_lines={len(self.state.workflow_hist)}",
-                f"workflow_summary={workflow_summary if isinstance(workflow_summary, str) else ''}",
             ]
         )
+
+    def _status_workflow_summary_text(self) -> str:
+        summary = getattr(self.state, "workflow_summary", "")
+        text = summary if isinstance(summary, str) else ""
+        return text if text.strip() else "(empty)"
+
+    def _status_workflow_hist_text(self) -> str:
+        rows = getattr(self.state, "workflow_hist", [])
+        if not isinstance(rows, list) or not rows:
+            return "(empty)"
+        return "\n".join(str(line) for line in rows)
+
+    def _status_full_proc_hist_text(self) -> str:
+        rows = getattr(self.state, "full_proc_hist", [])
+        if not isinstance(rows, list) or not rows:
+            return "(empty)"
+        return "\n".join(str(line) for line in rows)
 
     def _handle_command(self, command_line: str) -> str:
         parts = command_line.split(maxsplit=1)
@@ -93,7 +111,16 @@ class AgentRuntime:
         if cmd in {"/exit"}:
             return "__EXIT__"
         if cmd == "/status":
-            return self._status_text()
+            target = str(parts[1]).strip().lower() if len(parts) > 1 else ""
+            if not target:
+                return self._status_overview_text()
+            if target == "workflow_summary":
+                return self._status_workflow_summary_text()
+            if target == "workflow_hist":
+                return self._status_workflow_hist_text()
+            if target == "full_proc_hist":
+                return self._status_full_proc_hist_text()
+            return "Unknown /status target. Use: workflow_summary | workflow_hist | full_proc_hist"
         return f"Unknown command: {cmd}. Use /help."
 
     def start(

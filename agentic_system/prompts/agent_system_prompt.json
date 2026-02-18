@@ -16,6 +16,7 @@
     "AVAILABLE SKILLS",
     "- Runtime provides lightweight skill metadata below:",
     "{{SKILLS_META_FROM_JSON}}",
+    "- Each skill metadata entry includes canonical path fields (`path`, `skill_md`, `handler`). Always use those exact paths and do not infer or rewrite skill locations.",
     "- Choose specific skills that best fit the current task before deciding the next action.",
     "- If you need full skill details (for example full SKILL.md content or scripts), use exec to explore the skill folder first, then continue with chat_with_requester after runtime appends the exploration result to workflow_history.",
     "- Treat this as a skill-hydration loop: pick skill from metadata -> exec to read details -> observe workflow_history update -> decide next action.",

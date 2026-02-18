@@ -149,6 +149,7 @@ class PromptEngine:
                     continue
                 name = skill_dir.name
                 description = ""
+                handler = ""
                 try:
                     raw = skill_md_path.read_text(encoding="utf-8")
                     frontmatter = self._parse_frontmatter(raw)
@@ -156,10 +157,24 @@ class PromptEngine:
                         name = frontmatter["name"].strip()
                     if isinstance(frontmatter.get("description"), str):
                         description = frontmatter["description"].strip()
+                    if isinstance(frontmatter.get("handler"), str):
+                        handler = frontmatter["handler"].strip()
                 except Exception:
                     pass
                 summary = description if description else "No description."
-                rows.append(f"- {skill_dir.name} [{scope}] - {name}: {summary}")
+                skill_root_rel = f"skills/{scope}/{skill_dir.name}"
+                skill_md_rel = f"{skill_root_rel}/SKILL.md"
+                handler_rel = f"{skill_root_rel}/{handler}" if handler else ""
+                row = {
+                    "skill_id": skill_dir.name,
+                    "scope": scope,
+                    "path": skill_root_rel,
+                    "skill_md": skill_md_rel,
+                    "handler": handler_rel,
+                    "name": name,
+                    "description": summary,
+                }
+                rows.append("- " + json.dumps(row, ensure_ascii=True))
         if rows:
             lines.extend(rows)
         else:
