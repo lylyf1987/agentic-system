@@ -67,8 +67,11 @@ class StorageEngine:
             if not isinstance(out, dict):
                 return
             candidate = out.get("workflow_summary")
-            if isinstance(candidate, str) and candidate.strip():
-                self.workflow_summary = candidate.strip()
+            if isinstance(candidate, str):
+                normalized = candidate.strip()
+                if normalized:
+                    self.workflow_summary = normalized
+                # empty string means "no update", keep current workflow_summary
         except Exception:
             return
 
