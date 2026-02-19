@@ -1167,3 +1167,7 @@ def run_core_session():
         stream(result["final_report"])
         append_hist(core, "core_agent", result["final_report"])
 ```
+
+Can you teach me the SOTA reinforcement learning algorithm used in today's LLM post-training? I need the most recent knowledge.
+
+python -m agentic_system --workspace ./runtime_test --provider lmstudio --model-name "zai-org/glm-4.7-flash" --mode controlled

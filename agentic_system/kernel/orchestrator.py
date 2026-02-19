@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
@@ -120,18 +119,13 @@ class FlowEngine:
             state=state,
             model_router=model_router,
         )
-        show_full_stream = os.getenv("AGENTIC_SHOW_FULL_LLM_STREAM", "").strip().lower() in {"1", "true", "yes", "on"}
         on_chunk, finish_stream = self._build_stream_printer("core_agent")
-        on_raw_chunk, finish_raw_stream = self._build_stream_printer("core_agent(raw)")
 
         response = model_router.generate(
             role="core_agent",
             final_prompt=final_prompt,
             raw_response_callback=on_chunk,
-            stream_text_callback=on_raw_chunk if show_full_stream else None,
         )
-        if show_full_stream:
-            finish_raw_stream("")
         raw_response, action, action_input = self._normalize_llm_response(response)
         finish_stream(raw_response)
         state.update_state(
@@ -153,6 +147,7 @@ class FlowEngine:
                     prompt_engine=prompt_engine,
                     model_router=model_router,
                 )
+                print(f"runtime> chat_with_sub_agent is disabled in current runtime")
                 state.save_state()
             elif action == "exec":
                 if not isinstance(action_input, dict):
@@ -162,6 +157,7 @@ class FlowEngine:
                         prompt_engine=prompt_engine,
                         model_router=model_router,
                     )
+                    print(f"runtime> exec action requires object action_input")
                     state.save_state()
                 else:
                     if not self._confirm_exec(action_input):
@@ -171,6 +167,7 @@ class FlowEngine:
                             prompt_engine=prompt_engine,
                             model_router=model_router,
                         )
+                        print(f"runtime> exec denied by requester")
                         state.save_state()
                         continue
                     code_type = str(action_input.get("code_type", "bash")).strip().lower()
@@ -196,6 +193,7 @@ class FlowEngine:
                             prompt_engine=prompt_engine,
                             model_router=model_router,
                         )
+                        print(f"runtime> {json.dumps(exec_result, ensure_ascii=True)}")
                         state.save_state()
 
                     except Exception as exc:
@@ -205,6 +203,7 @@ class FlowEngine:
                             prompt_engine=prompt_engine,
                             model_router=model_router,
                         )
+                        print(f"runtime> exec error: {exc}")
                         state.save_state()
             else:
                 state.update_state(
@@ -213,6 +212,7 @@ class FlowEngine:
                     prompt_engine=prompt_engine,
                     model_router=model_router,
                 )
+                print(f"runtime> unsupported action: {action}")
                 state.save_state()
 
             self._ensure_runtime_fields(state)
@@ -222,16 +222,12 @@ class FlowEngine:
                 model_router=model_router,
             )
             on_chunk, finish_stream = self._build_stream_printer("core_agent")
-            on_raw_chunk, finish_raw_stream = self._build_stream_printer("core_agent(raw)")
 
             response = model_router.generate(
                 role="core_agent",
                 final_prompt=final_prompt,
                 raw_response_callback=on_chunk,
-                stream_text_callback=on_raw_chunk if show_full_stream else None,
             )
-            if show_full_stream:
-                finish_raw_stream("")
             raw_response, action, action_input = self._normalize_llm_response(response)
             finish_stream(raw_response)
             state.update_state(
@@ -249,6 +245,7 @@ class FlowEngine:
                 prompt_engine=prompt_engine,
                 model_router=model_router,
             )
+            print(f"runtime> max turns reached ({max_turns}); ending current loop")
             state.save_state()
 
     def run_session(
