@@ -13,6 +13,7 @@ from .storage import StorageEngine
 
 DEFAULT_LIMITS = {
     "max_inner_turns": 60,
+    "max_invalid_action_retries": 3,
 }
 
 
@@ -171,7 +172,9 @@ class FlowEngine:
             raise RuntimeError("FlowEngine requires model_router and prompt_engine to run")
 
         max_turns = int(self.limits.get("max_inner_turns", 999))
+        max_invalid_action_retries = int(self.limits.get("max_invalid_action_retries", 3))
         turns = 0
+        invalid_action_retries = 0
 
         self._ensure_runtime_fields(state)
         final_prompt = prompt_engine.build_prompt(
@@ -201,6 +204,7 @@ class FlowEngine:
             if action == "chat_with_requester":
                 break
             elif action == "chat_with_sub_agent":
+                invalid_action_retries = 0
                 state.update_state(
                     role="runtime",
                     text="chat_with_sub_agent is disabled in current runtime",
@@ -209,6 +213,7 @@ class FlowEngine:
                 print(f"runtime> chat_with_sub_agent is disabled in current runtime")
                 state.save_state()
             elif action == "exec":
+                invalid_action_retries = 0
                 if not isinstance(action_input, dict):
                     state.update_state(
                         role="runtime",
@@ -249,16 +254,34 @@ class FlowEngine:
                         print(f"runtime> exec error: {exc}")
                         state.save_state()
             elif action == "keep_reasoning":
+                invalid_action_retries = 0
                 pass
             else:
+                invalid_action_retries += 1
+                correction = (
+                    f"You chose invalid next action '{action}'. Please double check your last statement "
+                    "and select one allowed action from chat_with_requester, keep_reasoning, and exec."
+                )
                 state.update_state(
                     role="runtime",
-                    text=f"unsupported action: {action}",
+                    text=correction,
                 )
                 print()
-                print(f"runtime> get unsupported action from core_agent: {action}")
+                print(f"runtime> {correction}")
                 state.save_state()
-                break
+                if invalid_action_retries >= max_invalid_action_retries:
+                    stop_reason = (
+                        f"max invalid action retries reached ({max_invalid_action_retries}); "
+                        "ending current loop"
+                    )
+                    state.update_state(
+                        role="runtime",
+                        text=stop_reason,
+                    )
+                    print()
+                    print(f"runtime> {stop_reason}")
+                    state.save_state()
+                    break
 
             self._ensure_runtime_fields(state)
             final_prompt = prompt_engine.build_prompt(
