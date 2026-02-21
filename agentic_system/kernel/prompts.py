@@ -82,7 +82,6 @@ class PromptEngine:
         self.token_window_limit = int(token_window_limit)
         self.compact_keep_last_k = max(1, int(compact_keep_last_k))
         self.system_prompts_path = self.runtime_prompts_root / "agent_system_prompt.json"
-        self.legacy_system_prompts_path = self.runtime_prompts_root / "agent_systemp_prompt.json"
         self.agent_role_descriptions_path = self.runtime_prompts_root / "agent_role_description.json"
 
     @staticmethod
@@ -111,8 +110,6 @@ class PromptEngine:
         return cls._normalize_map(raw)
 
     def _load_system_prompts(self) -> dict[str, str]:
-        if not self.system_prompts_path.exists() and self.legacy_system_prompts_path.exists():
-            return self._load_json_map(self.legacy_system_prompts_path)
         return self._load_json_map(self.system_prompts_path)
 
     @staticmethod

@@ -22,7 +22,6 @@ class FlowEngine:
         mode: str,
         model_router: ModelRouter | None = None,
         prompt_engine: PromptEngine | None = None,
-        policy_engine: Any | None = None,
         approval_handler: Callable[[str], tuple[bool, str]] | None = None,
         limits: dict[str, int] | None = None,
     ) -> None:
@@ -30,7 +29,6 @@ class FlowEngine:
         self.mode = mode
         self.model_router = model_router
         self.prompt_engine = prompt_engine
-        self.policy_engine = policy_engine
         self.approval_handler = approval_handler
         self.last_core_agent_prompt: str = ""
         self.limits = deepcopy(DEFAULT_LIMITS)
@@ -111,7 +109,7 @@ class FlowEngine:
         if model_router is None or prompt_engine is None:
             raise RuntimeError("FlowEngine requires model_router and prompt_engine to run")
 
-        max_turns = int(self.limits.get("max_inner_turns", 60))
+        max_turns = int(self.limits.get("max_inner_turns", 999))
         turns = 0
 
         self._ensure_runtime_fields(state)

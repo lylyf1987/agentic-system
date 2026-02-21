@@ -5,7 +5,6 @@ from pathlib import Path
 
 from .kernel import (
     FlowEngine,
-    PolicyEngine,
     PromptEngine,
     StorageEngine,
 )
@@ -31,14 +30,12 @@ class AgentRuntime:
         if session_id is not None:
             self.state.load_state()
         self.model_router = ModelRouter(provider=self.provider, model_name=model_name)
-        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=9000)
-        self.policy = PolicyEngine()
+        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=int(128000 * 0.7))
         self.engine = FlowEngine(
             workspace=self.workspace,
             mode=self.mode,
             model_router=self.model_router,
             prompt_engine=self.prompt_engine,
-            policy_engine=self.policy,
             approval_handler=self._default_approval_prompt,
         )
 
