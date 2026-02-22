@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import select
+import re
 import shlex
 import sys
 import time
@@ -117,6 +118,22 @@ class FlowEngine:
             lines.append(f"- status: {status}")
         lines.extend(self._format_exec_value_lines("stdout", exec_result.get("stdout", "")))
         lines.extend(self._format_exec_value_lines("stderr", exec_result.get("stderr", "")))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _sanitize_core_agent_raw_response(raw_response: str) -> str:
+        text = str(raw_response or "")
+        if not text:
+            return ""
+        lines = text.splitlines()
+        first = lines[0]
+        first = re.sub(
+            r"^\[\d{4}-\d{2}-\d{2}T[^\]]+\]\s+[a-zA-Z0-9_\-]+>\s*:?\s*",
+            "",
+            first,
+        )
+        first = re.sub(r"^[a-zA-Z0-9_\-]+>\s*:?\s*", "", first)
+        lines[0] = first
         return "\n".join(lines)
 
     @staticmethod
@@ -450,13 +467,14 @@ class FlowEngine:
             raw_response_callback=on_chunk,
         )
         raw_response, action, action_input = self._normalize_llm_response(response)
+        clean_raw_response = self._sanitize_core_agent_raw_response(raw_response)
         state.append_action(role="core_agent", action=action, action_input=action_input)
-        finish_stream(raw_response)
+        finish_stream(clean_raw_response)
         state.update_state(
             role="core_agent",
             text=self._format_core_agent_record(
                 state=state,
-                raw_response=raw_response,
+                raw_response=clean_raw_response,
                 action=action,
                 action_input=action_input,
             ),
@@ -573,13 +591,14 @@ class FlowEngine:
                 raw_response_callback=on_chunk,
             )
             raw_response, action, action_input = self._normalize_llm_response(response)
+            clean_raw_response = self._sanitize_core_agent_raw_response(raw_response)
             state.append_action(role="core_agent", action=action, action_input=action_input)
-            finish_stream(raw_response)
+            finish_stream(clean_raw_response)
             state.update_state(
                 role="core_agent",
                 text=self._format_core_agent_record(
                     state=state,
-                    raw_response=raw_response,
+                    raw_response=clean_raw_response,
                     action=action,
                     action_input=action_input,
                 ),

@@ -352,7 +352,10 @@ class ModelRouter:
         return None
 
     @staticmethod
-    def _stream_raw_response_from_chunk_factory(callback: Callable[[str], None]) -> Callable[[str], None]:
+    def _stream_raw_response_from_chunk_factory(
+        callback: Callable[[str], None],
+        collector: list[str] | None = None,
+    ) -> Callable[[str], None]:
         key_pattern = re.compile(r'"raw_response"\s*:\s*"')
         search_buffer = ""
         capture = False
@@ -364,6 +367,8 @@ class ModelRouter:
         def emit(token: str) -> None:
             if token:
                 callback(token)
+                if collector is not None:
+                    collector.append(token)
 
         def consume_string_chars(text: str) -> None:
             nonlocal done, escape, unicode_remaining, unicode_digits
@@ -450,8 +455,12 @@ class ModelRouter:
             return {}
         model = self._select_model(role)
         parsed_callback: Callable[[str], None] | None = None
+        streamed_raw_response_parts: list[str] = []
         if raw_response_callback is not None:
-            parsed_callback = self._stream_raw_response_from_chunk_factory(raw_response_callback)
+            parsed_callback = self._stream_raw_response_from_chunk_factory(
+                raw_response_callback,
+                collector=streamed_raw_response_parts,
+            )
 
         chunk_callback: Callable[[str], None] | None = None
         if stream_text_callback is not None or parsed_callback is not None:
@@ -471,5 +480,13 @@ class ModelRouter:
         )
         payload = self._parse_json_payload(response.text or "")
         if isinstance(payload, dict):
+            if not str(payload.get("raw_response", "")).strip() and streamed_raw_response_parts:
+                payload["raw_response"] = "".join(streamed_raw_response_parts)
             return payload
+        if streamed_raw_response_parts:
+            return {
+                "raw_response": "".join(streamed_raw_response_parts),
+                "action": "none",
+                "action_input": {},
+            }
         return {}
