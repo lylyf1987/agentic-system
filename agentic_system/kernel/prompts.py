@@ -10,49 +10,49 @@ class PromptEngine:
     _SKILLS_META_PLACEHOLDER = "{{SKILLS_META_FROM_JSON}}"
     _KNOWLEDGE_META_PLACEHOLDER = "{{KNOWLEDGE_META_FROM_JSON}}"
     _RUNTIME_WORKSPACE_PLACEHOLDER = "{{RUNTIME_WORKSPACE}}"
+    _LATEST_CONTEXT_PLACEHOLDER = "{{LATEST_CONTEXT}}"
     WORKFLOW_SUMMARIZER_PROMPT = "\n".join(
         [
             "You are an objective observer of the full working history of an agentic system.",
-            "Your task is to update workflow_summary using both the current workflow_summary and the full workflow_history.",
+            "Your task is to maintain workflow_summary as the canonical full-progress tracker by writing concise factual summary text without inventing facts or adding speculation.",
             "Input format:",
-            "1) workflow_summary: current compact summary of workflow status.",
-            "    - workflow_summary is a workflow tracker used by the agent brain to understand the full picture and current position.",
-            "2) workflow_history: full workflow records in strict time order (earliest to latest).",
-            "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> : content.",
-            "Write concise factual summary text only. Do not invent facts and do not add speculation.",
+            "1) workflow_summary: current full-progress summary.",
+            "    - workflow_summary tracks big picture progress, key decisions, blockers, and current direction.",
+            "2) workflow_history: chronological records (earliest to latest).",
+            "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> content.",
             "Update policy:",
-            "1) If workflow_history does not add important new information, keep workflow_summary unchanged.",
-            "2) Only update when new facts materially change progress, blockers, decisions, or next focus.",
+            "1) Only update workflow_summary when new facts materially change progress, blockers, decisions, or next direction.",
+            "2) If there is no material change, return an empty update to preserve the existing summary.",
             "Focus requirements:",
             "1) Brief history from initial user intent to latest major changes.",
             "2) Key planning, decisions, actions and their relationships.",
-            "2) Current status: done, in progress, blocked.",
-            "3) Current focus and immediate next useful direction.",
-            "4) Prioritize recent workflow_history while preserving key earlier context.",
+            "3) Current status: done, in progress, blocked.",
+            "4) Current focus and immediate next useful direction.",
+            "5) Prioritize recent workflow_history while preserving essential earlier context.",
             "Output format:",
             "Return one JSON object wrapped in <output> and </output>.",
             "Do not output any text outside that block.",
             "Example:",
             "<output>",
-            "{\"workflow_summary\":\"...\"}",
+            "{\"workflow_summary\":\"\"}",
             "</output>",
         ]
     )
     WORKFLOW_COMPACTOR_PROMPT = "\n".join(
         [
             "You are an objective observer compressing older workflow records for runtime memory control.",
-            "Your task is to compact workflow_history into ONE concise chronological text block while preserving key facts.",
-            "Use workflow_summary only as context support.",
+            "Your task is to compact older workflow_history context into ONE concise chronological text block.",
+            "This output is for context-window control, not for progress tracking.",
+            "Use workflow_summary only as supporting context to preserve important facts.",
             "Input format:",
-            "1) workflow_summary: current compact summary of workflow status.",
-            "    - workflow_summary is a workflow tracker used by the agent to understand the full picture and current position.",
+            "1) workflow_summary: canonical full-progress summary.",
             "2) workflow_history: older workflow records in strict time order (earliest to latest).",
-            "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> : content.",
+            "    - workflow_history line format: [UTC_ISO_TIMESTAMP] role> content.",
             "Compression target:",
             "- Output ONE paragraph string, no bullets, no newlines, no markdown, no JSON inside the string.",
             "- Keep it factual and chronological.",
             "- Keep major planning, decisions, actions with outcomes, blockers, and unresolved loops.",
-            "- Exclude advice, speculation, and future planning.",
+            "- Exclude advice, speculation, and new planning.",
             "- Keep it compact; target <= 1200 characters.",
             "Output format:",
             "Return one JSON object wrapped in <output> and </output>.",
@@ -290,6 +290,8 @@ class PromptEngine:
             text = text.replace(self._KNOWLEDGE_META_PLACEHOLDER, knowledge_section)
         if self._RUNTIME_WORKSPACE_PLACEHOLDER in text:
             text = text.replace(self._RUNTIME_WORKSPACE_PLACEHOLDER, str(self.workspace))
+        if self._LATEST_CONTEXT_PLACEHOLDER in text:
+            text = text.replace(self._LATEST_CONTEXT_PLACEHOLDER, "{{LATEST_CONTEXT_VALUE}}")
         return text
 
     def _compact_workflow_history(
@@ -309,10 +311,12 @@ class PromptEngine:
         sections.append(
             "\n".join(
                 [
-                    "Workflow Summary:",
+                    "<workflow_summary>",
                     workflow_summary if workflow_summary else "(empty)",
-                    "Workflow History:",
+                    "</workflow_summary>",
+                    "<workflow_history>",
                     "\n".join(head) if head else "(empty)",
+                    "</workflow_history>",
                 ]
             )
         )
@@ -341,10 +345,12 @@ class PromptEngine:
         sections.append(
             "\n".join(
                 [
-                    "Workflow Summary:",
+                    "<workflow_summary>",
                     workflow_summary if workflow_summary else "(empty)",
-                    "Workflow History:",
+                    "</workflow_summary>",
+                    "<workflow_history>",
                     "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
+                    "</workflow_history>",
                 ]
             )
         )
@@ -377,17 +383,29 @@ class PromptEngine:
         sections: list[str] = []
         if system_prompt.strip():
             sections.append(system_prompt.strip())
+        latest_context = ""
+        for line in reversed(workflow_history_lines):
+            text = str(line).strip()
+            if text:
+                latest_context = text
+                break
         sections.append(
             "\n".join(
                 [
-                    "Workflow Summary:",
+                    "<latest_context>",
+                    latest_context if latest_context else "(empty)",
+                    "</latest_context>",
+                    "<workflow_summary>",
                     workflow_summary if workflow_summary else "(empty)",
-                    "Workflow History:",
+                    "</workflow_summary>",
+                    "<workflow_history>",
                     "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
+                    "</workflow_history>",
                 ]
             )
         )
         final_prompt = "\n\n".join(sections)
+        final_prompt = final_prompt.replace("{{LATEST_CONTEXT_VALUE}}", latest_context if latest_context else "(empty)")
         estimated_tokens = max(1, len(final_prompt) // 4)
         if (
             role == "core_agent"
@@ -411,16 +429,28 @@ class PromptEngine:
             sections: list[str] = []
             if system_prompt.strip():
                 sections.append(system_prompt.strip())
+            latest_context = ""
+            for line in reversed(workflow_history_lines):
+                text = str(line).strip()
+                if text:
+                    latest_context = text
+                    break
             sections.append(
                 "\n".join(
                     [
-                        "Workflow Summary:",
+                        "<latest_context>",
+                        latest_context if latest_context else "(empty)",
+                        "</latest_context>",
+                        "<workflow_summary>",
                         workflow_summary if workflow_summary else "(empty)",
-                        "Workflow History:",
+                        "</workflow_summary>",
+                        "<workflow_history>",
                         "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
+                        "</workflow_history>",
                     ]
                 )
             )
             final_prompt = "\n\n".join(sections)
+            final_prompt = final_prompt.replace("{{LATEST_CONTEXT_VALUE}}", latest_context if latest_context else "(empty)")
 
         return final_prompt

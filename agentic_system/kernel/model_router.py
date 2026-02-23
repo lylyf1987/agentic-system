@@ -332,7 +332,70 @@ class ModelRouter:
         return self.models["core_agent"]
 
     @staticmethod
-    def _parse_json_payload_with_error(text: str) -> tuple[dict[str, Any] | None, str]:
+    def _has_non_empty_script_args(action_input: dict[str, Any]) -> bool:
+        raw_args = action_input.get("script_args", [])
+        if isinstance(raw_args, str):
+            return bool(raw_args.strip())
+        if isinstance(raw_args, (list, tuple)):
+            return any(str(item).strip() for item in raw_args)
+        return raw_args not in (None, {})
+
+    @classmethod
+    def _validate_core_agent_payload(cls, payload: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        raw_response = payload.get("raw_response", "")
+        if not isinstance(raw_response, str) or not raw_response.strip():
+            errors.append("raw_response must be a non-empty string")
+
+        action = str(payload.get("action", "")).strip().lower()
+        allowed_actions = {"chat_with_requester", "keep_reasoning", "exec"}
+        if action not in allowed_actions:
+            errors.append("action must be one of chat_with_requester, keep_reasoning, exec")
+
+        action_input = payload.get("action_input")
+        if not isinstance(action_input, dict):
+            errors.append("action_input must be an object")
+            return errors
+
+        if action in {"chat_with_requester", "keep_reasoning"}:
+            if action_input:
+                errors.append(f"action_input must be {{}} when action is {action}")
+            return errors
+
+        if action == "exec":
+            code_type = str(action_input.get("code_type", "")).strip().lower()
+            if code_type not in {"bash", "python"}:
+                errors.append("exec action_input.code_type must be \"bash\" or \"python\"")
+            script_path = str(action_input.get("script_path", "")).strip()
+            script = str(action_input.get("script", "")).strip()
+            has_script_path = bool(script_path)
+            has_script = bool(script)
+            if has_script_path == has_script:
+                errors.append("exec action_input must include exactly one of script_path or script")
+            if has_script and cls._has_non_empty_script_args(action_input):
+                errors.append("exec action_input.script_args is only allowed when script_path is used")
+        return errors
+
+    @staticmethod
+    def _validate_workflow_summarizer_payload(payload: dict[str, Any]) -> list[str]:
+        candidate = payload.get("workflow_summary")
+        if isinstance(candidate, str):
+            return []
+        return ["workflow_summary must be a string"]
+
+    @staticmethod
+    def _validate_workflow_compactor_payload(payload: dict[str, Any]) -> list[str]:
+        candidate = payload.get("workflow_hist_compact")
+        if isinstance(candidate, str):
+            return []
+        return ["workflow_hist_compact must be a string"]
+
+    @classmethod
+    def _parse_json_payload_with_error(
+        cls,
+        text: str,
+        role: str,
+    ) -> tuple[dict[str, Any] | None, str]:
         raw = text.strip()
         if not raw:
             return None, "empty model output"
@@ -347,14 +410,27 @@ class ModelRouter:
             parsed = json.loads(block)
         except json.JSONDecodeError as exc:
             return None, f"invalid JSON in <output> ({exc.msg} at line {exc.lineno}, column {exc.colno})"
-        if isinstance(parsed, dict):
-            return parsed, ""
-        return None, "<output> JSON must be an object"
+        if not isinstance(parsed, dict):
+            return None, "<output> JSON must be an object"
+
+        role_name = str(role).strip().lower()
+        if role_name == "core_agent":
+            errors = cls._validate_core_agent_payload(parsed)
+            if errors:
+                return None, "; ".join(errors)
+        elif role_name == "workflow_summarizer":
+            errors = cls._validate_workflow_summarizer_payload(parsed)
+            if errors:
+                return None, "; ".join(errors)
+        elif role_name == "workflow_history_compactor":
+            errors = cls._validate_workflow_compactor_payload(parsed)
+            if errors:
+                return None, "; ".join(errors)
+        return parsed, ""
 
     @staticmethod
     def _stream_raw_response_from_chunk_factory(
         callback: Callable[[str], None],
-        collector: list[str] | None = None,
     ) -> Callable[[str], None]:
         key_pattern = re.compile(r'"raw_response"\s*:\s*"')
         search_buffer = ""
@@ -367,8 +443,6 @@ class ModelRouter:
         def emit(token: str) -> None:
             if token:
                 callback(token)
-                if collector is not None:
-                    collector.append(token)
 
         def consume_string_chars(text: str) -> None:
             nonlocal done, escape, unicode_remaining, unicode_digits
@@ -448,29 +522,16 @@ class ModelRouter:
         role: str = "core_agent",
         final_prompt: str | None = None,
         raw_response_callback: Callable[[str], None] | None = None,
-        stream_text_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         prompt = str(final_prompt or "").strip()
         if not prompt:
             return {}
         model = self._select_model(role)
         parsed_callback: Callable[[str], None] | None = None
-        streamed_raw_response_parts: list[str] = []
         if raw_response_callback is not None:
-            parsed_callback = self._stream_raw_response_from_chunk_factory(
-                raw_response_callback,
-                collector=streamed_raw_response_parts,
-            )
+            parsed_callback = self._stream_raw_response_from_chunk_factory(raw_response_callback)
 
-        chunk_callback: Callable[[str], None] | None = None
-        if stream_text_callback is not None or parsed_callback is not None:
-            def _combined(piece: str) -> None:
-                if stream_text_callback is not None:
-                    stream_text_callback(piece)
-                if parsed_callback is not None:
-                    parsed_callback(piece)
-
-            chunk_callback = _combined
+        chunk_callback: Callable[[str], None] | None = parsed_callback
 
         response = self.adapter.generate(
             model=model,
@@ -478,27 +539,15 @@ class ModelRouter:
             stream=True,
             chunk_callback=chunk_callback,
         )
-        payload, parse_error = self._parse_json_payload_with_error(response.text or "")
+        payload, parse_error = self._parse_json_payload_with_error(
+            response.text or "",
+            role=role,
+        )
         if isinstance(payload, dict):
             payload["_parse_ok"] = True
             payload["_parse_error"] = ""
-            if not str(payload.get("raw_response", "")).strip() and streamed_raw_response_parts:
-                payload["raw_response"] = "".join(streamed_raw_response_parts)
             return payload
-        base_payload = {
+        return {
             "_parse_ok": False,
             "_parse_error": parse_error,
-        }
-        if streamed_raw_response_parts:
-            return {
-                **base_payload,
-                "raw_response": "".join(streamed_raw_response_parts),
-                "action": "none",
-                "action_input": {},
-            }
-        return {
-            **base_payload,
-            "raw_response": "",
-            "action": "none",
-            "action_input": {},
         }

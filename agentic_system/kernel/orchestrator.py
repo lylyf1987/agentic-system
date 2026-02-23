@@ -439,83 +439,18 @@ class FlowEngine:
         action_input = dict(action_input_raw) if isinstance(action_input_raw, dict) else {}
         return raw_response, action, action_input
 
-    def _build_stream_printer(self) -> tuple[Callable[[str], None], Callable[[], str]]:
-        emitted_parts: list[str] = []
-
+    def _build_stream_printer(self) -> tuple[Callable[[str], None], Callable[[], None]]:
         def on_token(token: str) -> None:
             if not token:
                 return
             print(token, end="", flush=True)
-            emitted_parts.append(token)
 
-        def finish() -> str:
+        def finish() -> None:
             print()
-            return "".join(emitted_parts)
 
         return on_token, finish
 
-    @staticmethod
-    def _validate_exec_action_input(action_input: dict[str, Any]) -> list[str]:
-        errors: list[str] = []
-        code_type = str(action_input.get("code_type", "")).strip().lower()
-        if code_type not in {"bash", "python"}:
-            errors.append("exec action_input.code_type must be \"bash\" or \"python\"")
-        script_path = str(action_input.get("script_path", "")).strip()
-        script = str(action_input.get("script", "")).strip()
-        has_script_path = bool(script_path)
-        has_script = bool(script)
-        if has_script_path == has_script:
-            errors.append("exec action_input must include exactly one of script_path or script")
-        raw_args = action_input.get("script_args", [])
-        has_script_args = False
-        if isinstance(raw_args, str):
-            has_script_args = bool(raw_args.strip())
-        elif isinstance(raw_args, (list, tuple)):
-            has_script_args = any(str(item).strip() for item in raw_args)
-        elif raw_args not in (None, {}):
-            has_script_args = True
-        if has_script and has_script_args:
-            errors.append("exec action_input.script_args is only allowed when script_path is used")
-        return errors
-
-    def _validate_core_agent_output_contract(self, response: Any, streamed_raw_response: str) -> list[str]:
-        errors: list[str] = []
-        if not isinstance(response, dict):
-            return ["model_router.generate returned non-object response"]
-
-        parse_ok = bool(response.get("_parse_ok", False))
-        parse_error = str(response.get("_parse_error", "")).strip()
-        if not parse_ok:
-            if parse_error:
-                errors.append(parse_error)
-            else:
-                errors.append("failed to parse model output")
-            return errors
-
-        raw_response = response.get("raw_response", "")
-        if not isinstance(raw_response, str) or not raw_response.strip():
-            errors.append("raw_response must be a non-empty string")
-        if not str(streamed_raw_response).strip():
-            errors.append("raw_response was not streamable to UI")
-
-        action = str(response.get("action", "")).strip().lower()
-        allowed_actions = {"chat_with_requester", "keep_reasoning", "exec"}
-        if action not in allowed_actions:
-            errors.append("action must be one of chat_with_requester, keep_reasoning, exec")
-
-        action_input = response.get("action_input")
-        if not isinstance(action_input, dict):
-            errors.append("action_input must be an object")
-            return errors
-
-        if action in {"chat_with_requester", "keep_reasoning"}:
-            if action_input:
-                errors.append(f"action_input must be {{}} when action is {action}")
-        elif action == "exec":
-            errors.extend(self._validate_exec_action_input(action_input))
-        return errors
-
-    def _generate_valid_core_agent_turn(
+    def _call_core_agent(
         self,
         *,
         state: StorageEngine,
@@ -539,12 +474,13 @@ class FlowEngine:
                 final_prompt=final_prompt,
                 raw_response_callback=on_chunk,
             )
-            streamed_raw_response = finish_stream()
-            contract_errors = self._validate_core_agent_output_contract(response, streamed_raw_response)
-            if contract_errors:
+            finish_stream()
+            parse_ok = bool(response.get("_parse_ok", False)) if isinstance(response, dict) else False
+            if not parse_ok:
+                parse_error = str(response.get("_parse_error", "")).strip() if isinstance(response, dict) else ""
                 runtime_note = (
                     "invalid core_agent output contract: "
-                    + "; ".join(contract_errors)
+                    + (parse_error if parse_error else "failed to parse model output")
                     + '. Regenerate with <output>{"raw_response":"...","action":"chat_with_requester|keep_reasoning|exec","action_input":{}}</output>.'
                 )
                 state.update_state(
@@ -559,12 +495,11 @@ class FlowEngine:
                 state.save_state()
                 continue
             raw_response, action, action_input = self._normalize_llm_response(response)
-            _ = raw_response
             state.append_action(role="core_agent", action=action, action_input=action_input)
             state.update_state(
                 text=self._format_core_agent_record(
                     state=state,
-                    raw_response=streamed_raw_response,
+                    raw_response=raw_response,
                     action=action,
                     action_input=action_input,
                 ),
@@ -601,7 +536,7 @@ class FlowEngine:
         turns = 0
         invalid_action_retries = 0
 
-        action, action_input, ok = self._generate_valid_core_agent_turn(
+        action, action_input, ok = self._call_core_agent(
             state=state,
             model_router=model_router,
             prompt_engine=prompt_engine,
@@ -739,7 +674,7 @@ class FlowEngine:
                     state.save_state()
                     break
 
-            action, action_input, ok = self._generate_valid_core_agent_turn(
+            action, action_input, ok = self._call_core_agent(
                 state=state,
                 model_router=model_router,
                 prompt_engine=prompt_engine,
