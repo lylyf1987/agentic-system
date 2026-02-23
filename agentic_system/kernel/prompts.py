@@ -11,6 +11,8 @@ class PromptEngine:
     _KNOWLEDGE_META_PLACEHOLDER = "{{KNOWLEDGE_META_FROM_JSON}}"
     _RUNTIME_WORKSPACE_PLACEHOLDER = "{{RUNTIME_WORKSPACE}}"
     _LATEST_CONTEXT_PLACEHOLDER = "{{LATEST_CONTEXT}}"
+    _DEFAULT_RETRY_LIMIT = 3
+    _FORMAT_RETRY_LIMIT = 10
     WORKFLOW_SUMMARIZER_PROMPT = "\n".join(
         [
             "You are an objective observer of the full working history of an agentic system.",
@@ -297,7 +299,7 @@ class PromptEngine:
     def _compact_workflow_history(
         self,
         role: str,
-        state: Any, 
+        state: Any,
         compact_keep_last_k: int,
         model_router: Any,
     ) -> None:
@@ -321,12 +323,46 @@ class PromptEngine:
             )
         )
         final_prompt = "\n\n".join(sections)
-        response = model_router.generate(
-            role="workflow_history_compactor",
-            final_prompt=final_prompt
-        )
-        workflow_hist_compact = str(response.get("workflow_hist_compact", ""))
-        state.workflow_hist = [f"[{state.utc_now_iso()}] workflow_compactor> {workflow_hist_compact}"] + tail
+        format_attempts = 0
+        other_attempts = 0
+        while True:
+            parse_error = ""
+            response: Any = {}
+            try:
+                response = model_router.generate(
+                    role="workflow_history_compactor",
+                    final_prompt=final_prompt,
+                )
+                if not isinstance(response, dict):
+                    parse_error = "compactor returned non-object response"
+                elif not bool(response.get("_parse_ok", False)):
+                    parse_error = str(response.get("_parse_error", "")).strip() or "failed to parse compactor output"
+            except Exception as exc:
+                parse_error = f"compactor call failed: {exc}"
+
+            if not parse_error:
+                workflow_hist_compact = str(response.get("workflow_hist_compact", "")).strip()
+                if workflow_hist_compact:
+                    state.workflow_hist = [f"[{state.utc_now_iso()}] workflow_compactor> {workflow_hist_compact}"] + tail
+                    return
+                parse_error = "workflow_hist_compact must be a non-empty string"
+
+            if self._is_missing_output_block_error(parse_error):
+                format_attempts += 1
+                if format_attempts < self._FORMAT_RETRY_LIMIT:
+                    continue
+            else:
+                other_attempts += 1
+                if other_attempts < self._DEFAULT_RETRY_LIMIT:
+                    continue
+
+            print()
+            print(
+                "runtime> workflow_history_compactor failed after retries; "
+                "keeping workflow_history unchanged. "
+                f"last_error={parse_error}"
+            )
+            return
 
     def _refresh_workflow_summary_if_needed(
         self,
@@ -355,20 +391,56 @@ class PromptEngine:
             )
         )
         final_prompt = "\n\n".join(sections)
-        try:
-            out = model_router.generate(
-                role="workflow_summarizer",
-                final_prompt=final_prompt,
+        format_attempts = 0
+        other_attempts = 0
+        while True:
+            parse_error = ""
+            out: Any = {}
+            try:
+                out = model_router.generate(
+                    role="workflow_summarizer",
+                    final_prompt=final_prompt,
+                )
+                if not isinstance(out, dict):
+                    parse_error = "workflow_summarizer returned non-object response"
+                elif not bool(out.get("_parse_ok", False)):
+                    parse_error = str(out.get("_parse_error", "")).strip() or "failed to parse workflow_summarizer output"
+            except Exception as exc:
+                parse_error = f"workflow_summarizer call failed: {exc}"
+
+            if not parse_error:
+                candidate = out.get("workflow_summary")
+                if isinstance(candidate, str):
+                    normalized = candidate.strip()
+                    if normalized:
+                        state.workflow_summary = normalized
+                    return
+                parse_error = "workflow_summary must be a string"
+
+            if self._is_missing_output_block_error(parse_error):
+                format_attempts += 1
+                if format_attempts < self._FORMAT_RETRY_LIMIT:
+                    continue
+            else:
+                other_attempts += 1
+                if other_attempts < self._DEFAULT_RETRY_LIMIT:
+                    continue
+
+            print()
+            print(
+                "runtime> workflow_summarizer failed after retries; "
+                "keeping workflow_summary unchanged. "
+                f"last_error={parse_error}"
             )
-            if not isinstance(out, dict):
-                return
-            candidate = out.get("workflow_summary")
-            if isinstance(candidate, str):
-                normalized = candidate.strip()
-                if normalized:
-                    state.workflow_summary = normalized
-        except Exception:
             return
+
+    @staticmethod
+    def _is_missing_output_block_error(parse_error: str) -> bool:
+        text = str(parse_error or "").strip().lower()
+        return (
+            "missing <output>...</output> block" in text
+            or "empty <output> block" in text
+        )
 
     def build_prompt(
         self,
@@ -419,9 +491,9 @@ class PromptEngine:
             )
             self._compact_workflow_history(
                 role="workflow_history_compactor",
-                state=state, 
-                compact_keep_last_k=self.compact_keep_last_k, 
-                model_router=model_router
+                state=state,
+                compact_keep_last_k=self.compact_keep_last_k,
+                model_router=model_router,
             )
             workflow_summary = str(getattr(state, "workflow_summary", "")).strip()
             workflow_history: list[str] = getattr(state, "workflow_hist", [])
