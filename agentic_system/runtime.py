@@ -30,7 +30,7 @@ class AgentRuntime:
         if session_id is not None:
             self.state.load_state()
         self.model_router = ModelRouter(provider=self.provider, model_name=model_name)
-        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=int(200000 * 0.7), compact_keep_last_k=10)
+        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=int(100000 * 0.7), compact_keep_last_k=10)
         self.engine = FlowEngine(
             workspace=self.workspace,
             mode=self.mode,
@@ -50,7 +50,7 @@ class AgentRuntime:
         for file_name in ("agent_system_prompt.json", "agent_role_description.json"):
             source = self.packaged_prompts_root / file_name
             target = runtime_prompts_root / file_name
-            if source.exists() and not target.exists():
+            if source.exists():
                 shutil.copy2(source, target)
 
         for scope in ("core-agent", "all-agents"):
@@ -62,7 +62,10 @@ class AgentRuntime:
             for skill_dir in sorted(path for path in source_scope.iterdir() if path.is_dir()):
                 target_dir = target_scope / skill_dir.name
                 if target_dir.exists():
-                    continue
+                    if target_dir.is_dir():
+                        shutil.rmtree(target_dir)
+                    else:
+                        target_dir.unlink()
                 shutil.copytree(skill_dir, target_dir)
 
     @staticmethod

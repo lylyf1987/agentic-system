@@ -478,6 +478,13 @@ class FlowEngine:
             parse_ok = bool(response.get("_parse_ok", False)) if isinstance(response, dict) else False
             if not parse_ok:
                 parse_error = str(response.get("_parse_error", "")).strip() if isinstance(response, dict) else ""
+                state.update_state(
+                    text=self._format_history_record(
+                        state=state,
+                        role="core_agent",
+                        text="[invalid_output_rejected]",
+                    ),
+                )
                 runtime_note = (
                     "invalid core_agent output contract: "
                     + (parse_error if parse_error else "failed to parse model output")

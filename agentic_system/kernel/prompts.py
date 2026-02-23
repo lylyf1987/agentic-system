@@ -464,12 +464,15 @@ class PromptEngine:
         sections.append(
             "\n".join(
                 [
+                    "Latest Context",
                     "<latest_context>",
                     latest_context if latest_context else "(empty)",
                     "</latest_context>",
+                    "Workflow Summary",
                     "<workflow_summary>",
                     workflow_summary if workflow_summary else "(empty)",
                     "</workflow_summary>",
+                    "Workflow History",
                     "<workflow_history>",
                     "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
                     "</workflow_history>",
@@ -510,12 +513,15 @@ class PromptEngine:
             sections.append(
                 "\n".join(
                     [
+                        "Latest Context",
                         "<latest_context>",
                         latest_context if latest_context else "(empty)",
                         "</latest_context>",
+                        "Workflow Summary",
                         "<workflow_summary>",
                         workflow_summary if workflow_summary else "(empty)",
                         "</workflow_summary>",
+                        "Workflow History",
                         "<workflow_history>",
                         "\n".join(workflow_history_lines) if workflow_history_lines else "(empty)",
                         "</workflow_history>",

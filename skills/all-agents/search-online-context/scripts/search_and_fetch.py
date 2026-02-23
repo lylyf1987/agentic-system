@@ -43,6 +43,33 @@ def _http_get_json(url: str, timeout: int) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _http_post_json(
+    url: str,
+    payload: dict[str, Any],
+    timeout: int,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (AgenticSystemSkill/1.0)",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if isinstance(headers, dict):
+        req_headers.update(headers)
+    req = Request(
+        url=url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=req_headers,
+        method="POST",
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        charset = resp.headers.get_content_charset() or "utf-8"
+        body = resp.read(1_500_000).decode(charset, errors="replace")
+    parsed = json.loads(body)
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _clean_text(text: str) -> str:
     out = re.sub(r"(?is)<(script|style|noscript).*?>.*?</\1>", " ", text)
     out = re.sub(r"(?s)<!--.*?-->", " ", out)
@@ -113,6 +140,78 @@ def search_searxng(
     return results
 
 
+def search_zai(
+    *,
+    base_url: str,
+    api_key: str,
+    query: str,
+    limit: int,
+    timeout: int,
+    search_engine: str,
+    search_domain_filter: str,
+    search_recency_filter: str,
+) -> list[dict[str, Any]]:
+    token = str(api_key).strip()
+    if not token:
+        raise ValueError("missing ZAI_API_KEY for Z.AI web search")
+    normalized_base = str(base_url).strip().rstrip("/")
+    if not normalized_base:
+        raise ValueError("empty Z.AI base URL")
+    if normalized_base.endswith("/web_search"):
+        endpoint = normalized_base
+    else:
+        endpoint = f"{normalized_base}/web_search"
+
+    count = max(1, min(50, int(limit)))
+    payload: dict[str, Any] = {
+        "search_engine": str(search_engine).strip() or "search-prime",
+        "search_query": query,
+        "count": count,
+    }
+    domain_filter = str(search_domain_filter).strip()
+    if domain_filter:
+        payload["search_domain_filter"] = domain_filter
+    recency_filter = str(search_recency_filter).strip()
+    if recency_filter:
+        payload["search_recency_filter"] = recency_filter
+
+    raw = _http_post_json(
+        endpoint,
+        payload=payload,
+        timeout=timeout,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    rows = raw.get("search_result", [])
+    if not isinstance(rows, list):
+        rows = []
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        href = str(item.get("link", "")).strip()
+        if not href or not href.lower().startswith(("http://", "https://")):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        title = str(item.get("title", "")).strip() or href
+        snippet = _clean_inline_html(str(item.get("content", "")).strip())
+        out.append(
+            {
+                "rank": len(out) + 1,
+                "title": title,
+                "url": href,
+                "snippet": snippet,
+                "engines": [f"zai:{payload['search_engine']}"],
+            }
+        )
+        if len(out) >= count:
+            break
+    return out
+
+
 def fetch_context(url: str, max_chars: int, timeout: int) -> tuple[str, str]:
     html = _http_get_text(url, timeout=timeout)
     text = _clean_text(html)
@@ -157,6 +256,12 @@ def run(
     language: str,
     categories: str,
     safesearch: int,
+    search_backend: str,
+    zai_base_url: str,
+    zai_api_key: str,
+    zai_search_engine: str,
+    zai_search_domain_filter: str,
+    zai_search_recency_filter: str,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "executed_skill": _EXECUTED_SKILL,
@@ -165,24 +270,54 @@ def run(
         "fetched_context": "",
     }
 
-    try:
-        results = search_searxng(
-            base_url=searxng_base_url,
-            query=query,
-            limit=limit,
-            timeout=timeout,
-            language=language,
-            categories=categories,
-            safesearch=safesearch,
-        )
-    except Exception as exc:
-        payload["status"] = "error"
-        payload["fetched_context"] = f"search_error: {exc}"
-        return payload
+    backend = str(search_backend).strip().lower() or "auto"
+    errors: list[str] = []
+    backend_used = "none"
+    results: list[dict[str, Any]] = []
+
+    should_try_zai = backend in {"auto", "zai"}
+    should_try_searxng = backend in {"auto", "searxng"}
+
+    if should_try_zai:
+        try:
+            results = search_zai(
+                base_url=zai_base_url,
+                api_key=zai_api_key,
+                query=query,
+                limit=limit,
+                timeout=timeout,
+                search_engine=zai_search_engine,
+                search_domain_filter=zai_search_domain_filter,
+                search_recency_filter=zai_search_recency_filter,
+            )
+            if results:
+                backend_used = "zai"
+            else:
+                errors.append("zai: no results found")
+        except Exception as exc:
+            errors.append(f"zai: {exc}")
+
+    if not results and should_try_searxng:
+        try:
+            results = search_searxng(
+                base_url=searxng_base_url,
+                query=query,
+                limit=limit,
+                timeout=timeout,
+                language=language,
+                categories=categories,
+                safesearch=safesearch,
+            )
+            if results:
+                backend_used = "searxng"
+            else:
+                errors.append("searxng: no results found")
+        except Exception as exc:
+            errors.append(f"searxng: {exc}")
 
     if not results:
         payload["status"] = "error"
-        payload["fetched_context"] = "search_error: no results found"
+        payload["fetched_context"] = "search_error: " + " | ".join(errors if errors else ["no results found"])
         return payload
 
     fetched_rows: list[dict[str, Any]] = []
@@ -214,8 +349,10 @@ def run(
     summary = (
         "search_ok: "
         f"query={query!r}; search_results={len(results)}; fetched={len(fetched_rows)}; "
-        f"searxng_base_url={searxng_base_url}"
+        f"backend={backend_used}"
     )
+    if errors:
+        summary += f"; fallback_notes={' | '.join(errors)}"
     details = _format_fetched_context(fetched_rows)
     payload["fetched_context"] = summary if not details else f"{summary}\n\n{details}"
 
@@ -223,7 +360,9 @@ def run(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Search via SearXNG and fetch context from top results.")
+    parser = argparse.ArgumentParser(
+        description="Search via Z.AI (default) with SearXNG fallback and fetch context from top results."
+    )
     parser.add_argument("--query", required=True, help="Search query text")
     parser.add_argument("--limit", type=int, default=6, help="Max search results to keep")
     parser.add_argument("--fetch", type=int, default=3, help="How many top links to fetch for context")
@@ -237,6 +376,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default="en-US", help="SearXNG language code")
     parser.add_argument("--categories", default="general", help="SearXNG categories")
     parser.add_argument("--safesearch", type=int, default=1, help="SearXNG safesearch level (0-2)")
+    parser.add_argument(
+        "--search-backend",
+        choices=["auto", "zai", "searxng"],
+        default=os.getenv("SEARCH_BACKEND", "auto"),
+        help="Search backend selection. auto: Z.AI first then SearXNG fallback.",
+    )
+    parser.add_argument(
+        "--zai-base-url",
+        default=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
+        help="Z.AI API base URL for web_search endpoint",
+    )
+    parser.add_argument(
+        "--zai-api-key",
+        default=os.getenv("ZAI_API_KEY", ""),
+        help="Z.AI API key (can also come from ZAI_API_KEY env)",
+    )
+    parser.add_argument(
+        "--zai-search-engine",
+        default=os.getenv("ZAI_SEARCH_ENGINE", "search-prime"),
+        help="Z.AI search engine name",
+    )
+    parser.add_argument(
+        "--zai-search-domain-filter",
+        default=os.getenv("ZAI_SEARCH_DOMAIN_FILTER", ""),
+        help="Optional Z.AI domain filter",
+    )
+    parser.add_argument(
+        "--zai-search-recency-filter",
+        default=os.getenv("ZAI_SEARCH_RECENCY_FILTER", "noLimit"),
+        help="Optional Z.AI recency filter (for example: noLimit, oneDay, oneWeek)",
+    )
     return parser.parse_args()
 
 
@@ -252,6 +422,12 @@ def main() -> int:
         language=str(args.language).strip() or "en-US",
         categories=str(args.categories).strip() or "general",
         safesearch=max(0, min(2, int(args.safesearch))),
+        search_backend=str(args.search_backend).strip().lower() or "auto",
+        zai_base_url=str(args.zai_base_url).strip(),
+        zai_api_key=str(args.zai_api_key),
+        zai_search_engine=str(args.zai_search_engine).strip() or "search-prime",
+        zai_search_domain_filter=str(args.zai_search_domain_filter).strip(),
+        zai_search_recency_filter=str(args.zai_search_recency_filter).strip() or "noLimit",
     )
     print(json.dumps(result, ensure_ascii=True))
     return 0
