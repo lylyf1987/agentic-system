@@ -1,15 +1,16 @@
 # Docs Index
 
-Repository documentation is organized as:
+This repository currently uses the design docs as the primary source of truth.
 
-- `design/system_design.md`: end-to-end product and architecture design
-- `specs/`: executable implementation specs
-  - `specs/architecture.md`
-  - `specs/schemas.md`
-  - `specs/policy.md`
-  - `specs/memory.md`
+## Read Order
 
-Quick entry points:
+1. `design/system_design.md`
+- Current implemented architecture and runtime behavior.
 
-1. Start at `design/system_design.md`
-2. Validate implementation targets in `specs/architecture.md`
+2. `design/development_plan.md`
+- Post-baseline roadmap and execution priorities.
+
+## About `specs/`
+
+`specs/` currently contains legacy draft material from earlier architecture iterations.
+Treat it as historical reference until it is rewritten to match the current runtime.
