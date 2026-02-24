@@ -13,6 +13,24 @@ from urllib.request import Request, urlopen
 _EXECUTED_SKILL = "search-online-context"
 
 
+def _ok(query: str, fetched_context: str) -> dict[str, Any]:
+    return {
+        "executed_skill": _EXECUTED_SKILL,
+        "status": "ok",
+        "query": str(query),
+        "fetched_context": str(fetched_context),
+    }
+
+
+def _err(query: str, fetched_context: str) -> dict[str, Any]:
+    return {
+        "executed_skill": _EXECUTED_SKILL,
+        "status": "error",
+        "query": str(query),
+        "fetched_context": str(fetched_context),
+    }
+
+
 def _http_get_text(url: str, timeout: int) -> str:
     req = Request(
         url,
@@ -263,12 +281,7 @@ def run(
     zai_search_domain_filter: str,
     zai_search_recency_filter: str,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "executed_skill": _EXECUTED_SKILL,
-        "status": "ok",
-        "query": query,
-        "fetched_context": "",
-    }
+    payload: dict[str, Any] = _ok(query=query, fetched_context="")
 
     backend = str(search_backend).strip().lower() or "auto"
     errors: list[str] = []
@@ -316,9 +329,10 @@ def run(
             errors.append(f"searxng: {exc}")
 
     if not results:
-        payload["status"] = "error"
-        payload["fetched_context"] = "search_error: " + " | ".join(errors if errors else ["no results found"])
-        return payload
+        return _err(
+            query=query,
+            fetched_context="search_error: " + " | ".join(errors if errors else ["no results found"]),
+        )
 
     fetched_rows: list[dict[str, Any]] = []
     for item in results[: max(0, fetch_count)]:
@@ -412,25 +426,32 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    result = run(
-        query=str(args.query).strip(),
-        limit=max(1, int(args.limit)),
-        fetch_count=max(0, int(args.fetch)),
-        context_chars=max(200, int(args.context_chars)),
-        timeout=max(5, int(args.timeout)),
-        searxng_base_url=str(args.searxng_base_url).strip(),
-        language=str(args.language).strip() or "en-US",
-        categories=str(args.categories).strip() or "general",
-        safesearch=max(0, min(2, int(args.safesearch))),
-        search_backend=str(args.search_backend).strip().lower() or "auto",
-        zai_base_url=str(args.zai_base_url).strip(),
-        zai_api_key=str(args.zai_api_key),
-        zai_search_engine=str(args.zai_search_engine).strip() or "search-prime",
-        zai_search_domain_filter=str(args.zai_search_domain_filter).strip(),
-        zai_search_recency_filter=str(args.zai_search_recency_filter).strip() or "noLimit",
-    )
-    print(json.dumps(result, ensure_ascii=True))
-    return 0
+    query = str(args.query).strip()
+    try:
+        result = run(
+            query=query,
+            limit=max(1, int(args.limit)),
+            fetch_count=max(0, int(args.fetch)),
+            context_chars=max(200, int(args.context_chars)),
+            timeout=max(5, int(args.timeout)),
+            searxng_base_url=str(args.searxng_base_url).strip(),
+            language=str(args.language).strip() or "en-US",
+            categories=str(args.categories).strip() or "general",
+            safesearch=max(0, min(2, int(args.safesearch))),
+            search_backend=str(args.search_backend).strip().lower() or "auto",
+            zai_base_url=str(args.zai_base_url).strip(),
+            zai_api_key=str(args.zai_api_key),
+            zai_search_engine=str(args.zai_search_engine).strip() or "search-prime",
+            zai_search_domain_filter=str(args.zai_search_domain_filter).strip(),
+            zai_search_recency_filter=str(args.zai_search_recency_filter).strip() or "noLimit",
+        )
+        print(json.dumps(result, ensure_ascii=True))
+        return 0 if str(result.get("status", "")).strip().lower() == "ok" else 1
+    except Exception as exc:  # unexpected runtime failure
+        out = _err(query=query, fetched_context=f"search_error: unexpected exception: {exc}")
+        print(json.dumps(out, ensure_ascii=True))
+        print("unexpected error", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

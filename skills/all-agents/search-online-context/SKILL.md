@@ -49,16 +49,34 @@ Stop conditions:
 # Runtime Script
 
 - Script path: `skills/all-agents/search-online-context/scripts/search_and_fetch.py`
-- Executor: bash (runs `python ...`)
+- Executor: `python` via `script_path` + `script_args`
+
+# Runtime Contract
+
+1. `stdout` must contain one final JSON object.
+2. Use `stderr` only for unexpected runtime failures.
+3. Keep `stdout` concise but informative so `workflow_hist` remains readable.
 
 # Action Input Template
 
-Use `exec` with a bash command that invokes the script with arguments:
+Use `exec` with `code_type=python`, `script_path`, and `script_args` array:
 
 ```json
 {
-  "code_type": "bash",
-  "script": "python skills/all-agents/search-online-context/scripts/search_and_fetch.py --query \"latest openai api updates\" --search-backend auto --zai-base-url \"https://api.z.ai/api/paas/v4\" --searxng-base-url \"http://127.0.0.1:8888\" --limit 6 --fetch 3 --context-chars 1800 --language en-US --categories general --safesearch 1"
+  "code_type": "python",
+  "script_path": "skills/all-agents/search-online-context/scripts/search_and_fetch.py",
+  "script_args": [
+    "--query", "latest openai api updates",
+    "--search-backend", "auto",
+    "--zai-base-url", "https://api.z.ai/api/paas/v4",
+    "--searxng-base-url", "http://127.0.0.1:8888",
+    "--limit", "6",
+    "--fetch", "3",
+    "--context-chars", "1800",
+    "--language", "en-US",
+    "--categories", "general",
+    "--safesearch", "1"
+  ]
 }
 ```
 
@@ -66,8 +84,20 @@ Follow-up sub-link/domain round example:
 
 ```json
 {
-  "code_type": "bash",
-  "script": "python skills/all-agents/search-online-context/scripts/search_and_fetch.py --query \"site:forecast.weather.gov chicago tomorrow weather\" --search-backend auto --zai-base-url \"https://api.z.ai/api/paas/v4\" --searxng-base-url \"http://127.0.0.1:8888\" --limit 8 --fetch 4 --context-chars 2200 --language en-US --categories general --safesearch 1"
+  "code_type": "python",
+  "script_path": "skills/all-agents/search-online-context/scripts/search_and_fetch.py",
+  "script_args": [
+    "--query", "site:forecast.weather.gov chicago tomorrow weather",
+    "--search-backend", "auto",
+    "--zai-base-url", "https://api.z.ai/api/paas/v4",
+    "--searxng-base-url", "http://127.0.0.1:8888",
+    "--limit", "8",
+    "--fetch", "4",
+    "--context-chars", "2200",
+    "--language", "en-US",
+    "--categories", "general",
+    "--safesearch", "1"
+  ]
 }
 ```
 

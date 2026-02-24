@@ -264,7 +264,7 @@ Current packaged all-agent skills:
 2. `search-online-context`
 3. `load-knowledge-docs`
 4. `documentation-distillation`
-5. `skill-authorization`
+5. `skill-creation`
 
 Design intent:
 
