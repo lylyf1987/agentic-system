@@ -24,6 +24,9 @@
     "AVAILABLE KNOWLEDGE",
     "{{KNOWLEDGE_META_FROM_JSON}}",
     "",
+    "BUILT-IN REFERENCE LOADERS",
+    "{{BUILTIN_REFERENCE_LOADERS}}",
+    "",
     "INPUTS",
     "  1) Latest Context: the latest line from workflow_history, i.e., the immediate target you must respond to first.",
     "  2) Workflow Summary: canonical full-progress tracker for big picture, status, blockers, and direction.",
@@ -108,7 +111,7 @@
     "  - If output is vague or missing, the next turn will not have enough context.",
     "",
     "- Skills and Knowledge:",
-    "  - Before using a skill, load full skill details via load-skill.",
-    "  - Use knowledge metadata first; load full docs via load-knowledge-docs only when needed."
+    "  - Before using any non-loader skill, use built-in loader \"load-skill\" to load that skill's full reference into workflow_history.",
+    "  - Use knowledge metadata first; then use built-in loader \"load-knowledge-docs\" to load only the docs needed for current reasoning."
   ]
 }

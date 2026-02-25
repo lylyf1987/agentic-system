@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import select
 import shlex
 import sys
@@ -30,6 +31,7 @@ class FlowEngine:
         model_router: ModelRouter | None = None,
         prompt_engine: PromptEngine | None = None,
         approval_handler: Callable[[str], tuple[bool, str]] | None = None,
+        write_policy_handler: Callable[[str, list[str]], str | None] | None = None,
         limits: dict[str, int] | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
@@ -37,6 +39,7 @@ class FlowEngine:
         self.model_router = model_router
         self.prompt_engine = prompt_engine
         self.approval_handler = approval_handler
+        self.write_policy_handler = write_policy_handler
         self.last_core_agent_prompt: str = ""
         self.limits = deepcopy(DEFAULT_LIMITS)
         if limits:
@@ -57,6 +60,8 @@ class FlowEngine:
             state.exec_approval_pattern = []
         if not isinstance(getattr(state, "exec_approval_path", None), list):
             state.exec_approval_path = []
+        if not isinstance(getattr(state, "exec_auto_write_allowlist", None), list):
+            state.exec_auto_write_allowlist = []
 
     @staticmethod
     def _normalize_script_args(raw_script_args: Any) -> list[str]:
@@ -102,12 +107,109 @@ class FlowEngine:
             return ""
         return f"exec|{code_type}|script_path|{script_path}"
 
+    def _is_auto_mode(self) -> bool:
+        return str(self.mode).strip().lower() == "auto"
+
+    def _normalize_allow_path(self, value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.workspace / candidate
+        return str(candidate.resolve())
+
+    def _collect_external_path_suggestions(
+        self,
+        action_input: dict[str, Any],
+        exec_result: dict[str, Any] | None = None,
+    ) -> list[str]:
+        suggestions: list[str] = []
+        seen: set[str] = set()
+
+        def _push(text: str) -> None:
+            token = str(text or "").strip()
+            if not token:
+                return
+            if "=" in token and not token.startswith("="):
+                _, rhs = token.split("=", 1)
+                token = rhs.strip()
+            token = token.strip("'\"")
+            if token.startswith("~"):
+                normalized = self._normalize_allow_path(token)
+            elif token.startswith("/"):
+                normalized = self._normalize_allow_path(token)
+            else:
+                return
+            if not normalized:
+                return
+            candidate = Path(normalized)
+            if candidate == self.workspace or self.workspace in candidate.parents:
+                return
+            if normalized in seen:
+                return
+            seen.add(normalized)
+            suggestions.append(normalized)
+
+        def _scan_text_for_paths(text: str) -> None:
+            payload = str(text or "")
+            if not payload:
+                return
+            matches = re.findall(r"(~\/[^\s\"'`<>|;:,]+|\/[^\s\"'`<>|;:,]+)", payload)
+            for token in matches:
+                _push(token)
+
+        _push(str(action_input.get("script_path", "")))
+        for arg in self._normalize_script_args(action_input.get("script_args", [])):
+            _push(arg)
+        script_value = str(action_input.get("script", "")).strip()
+        if script_value:
+            try:
+                script_tokens = shlex.split(script_value)
+            except ValueError:
+                script_tokens = script_value.split()
+            for token in script_tokens:
+                _push(token)
+        if isinstance(exec_result, dict):
+            _scan_text_for_paths(str(exec_result.get("stderr", "")))
+            _scan_text_for_paths(str(exec_result.get("stdout", "")))
+        return suggestions
+
+    @staticmethod
+    def _is_write_policy_violation_result(exec_result: dict[str, Any]) -> bool:
+        if not isinstance(exec_result, dict):
+            return False
+        if not bool(exec_result.get("write_policy_enabled", False)):
+            return False
+        if str(exec_result.get("status", "")).strip().lower() != "failed":
+            return False
+        stderr_text = str(exec_result.get("stderr", ""))
+        stdout_text = str(exec_result.get("stdout", ""))
+        combined_text = f"{stderr_text}\n{stdout_text}".lower()
+        markers = (
+            "operation not permitted",
+            "read-only file system",
+            "sandbox",
+            "file-write",
+            "/dev/null",
+        )
+        return any(marker in combined_text for marker in markers)
+
     @staticmethod
     def _format_exec_value_lines(label: str, value: Any) -> list[str]:
         lines = [f"  - {label}:"]
-        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=True)
+        raw_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=True)
+        text = str(raw_text)
         if not text:
             return lines
+        stripped = text.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                text = json.dumps(parsed, ensure_ascii=True, indent=2)
         for row in str(text).splitlines():
             lines.append(f"    {row}")
         return lines
@@ -162,6 +264,30 @@ class FlowEngine:
         lines.extend(self._format_exec_value_lines("stdout", exec_result.get("stdout", "")))
         lines.extend(self._format_exec_value_lines("stderr", exec_result.get("stderr", "")))
         return lines
+
+    def _record_exec_result(self, state: StorageEngine, exec_result: dict[str, Any]) -> None:
+        exec_lines = self._build_exec_result_lines(exec_result)
+        if not exec_lines:
+            return
+        first_line = exec_lines[0]
+        continuation_lines = exec_lines[1:]
+        history_text = self._format_history_block(
+            state=state,
+            role="runtime",
+            first_line=first_line,
+            continuation_lines=continuation_lines,
+        )
+        ui_text = self._format_ui_block(
+            role="runtime",
+            first_line=first_line,
+            continuation_lines=continuation_lines,
+        )
+        state.update_state(
+            text=history_text,
+        )
+        print()
+        print(ui_text)
+        state.save_state()
 
     @staticmethod
     def _format_history_record(state: StorageEngine, role: str, text: str) -> str:
@@ -296,7 +422,7 @@ class FlowEngine:
                 )
             status_by_job[job_id] = "cancelled"
 
-    def _wait_for_exec_jobs(self, jobs: list[ExecJob]) -> list[dict[str, str]]:
+    def _wait_for_exec_jobs(self, jobs: list[ExecJob]) -> list[dict[str, Any]]:
         if not jobs:
             return []
 
@@ -466,6 +592,13 @@ class FlowEngine:
                     "status": status,
                     "stdout": str(result.get("stdout", "")),
                     "stderr": str(result.get("stderr", "")),
+                    "write_policy_enabled": bool(result.get("write_policy_enabled", False)),
+                    "write_policy_mode": str(result.get("write_policy_mode", "")),
+                    "write_policy_backend": str(result.get("write_policy_backend", "")),
+                    "write_policy_workspace": str(result.get("write_policy_workspace", "")),
+                    "write_policy_external_roots": list(result.get("write_policy_external_roots", []))
+                    if isinstance(result.get("write_policy_external_roots", []), list)
+                    else [],
                 }
             )
         return out
@@ -636,44 +769,85 @@ class FlowEngine:
                         break
                     try:
                         job_name = str(action_input.get("job_name", "none")).strip() or "none"
-                        job_id = f"job_{uuid4().hex[:8]}"
-                        job = start_exec_job(
-                            action_input=action_input,
-                            workspace=self.workspace,
-                            job_id=job_id,
-                            job_name=job_name,
-                        )
-                        print()
-                        print(
-                            "runtime> [exec started] "
-                            f"job_name={job_name} job_id={job_id} "
-                            f"(Ctrl+C to cancel all, /cancel {job_id} to cancel this job)"
-                        )
-
-                        exec_results = self._wait_for_exec_jobs([job])
-                        for exec_result in exec_results:
-                            exec_lines = self._build_exec_result_lines(exec_result)
-                            if not exec_lines:
-                                continue
-                            first_line = exec_lines[0]
-                            continuation_lines = exec_lines[1:]
-                            history_text = self._format_history_block(
-                                state=state,
-                                role="runtime",
-                                first_line=first_line,
-                                continuation_lines=continuation_lines,
-                            )
-                            ui_text = self._format_ui_block(
-                                role="runtime",
-                                first_line=first_line,
-                                continuation_lines=continuation_lines,
-                            )
-                            state.update_state(
-                                text=history_text,
+                        write_policy_mode = "workspace_write_only" if self._is_auto_mode() else "none"
+                        write_override_used = False
+                        while True:
+                            job_id = f"job_{uuid4().hex[:8]}"
+                            job = start_exec_job(
+                                action_input=action_input,
+                                workspace=self.workspace,
+                                job_id=job_id,
+                                job_name=job_name,
+                                write_policy_mode=write_policy_mode,
+                                external_write_roots=list(getattr(state, "exec_auto_write_allowlist", [])),
                             )
                             print()
-                            print(ui_text)
+                            print(
+                                "runtime> [exec started] "
+                                f"job_name={job_name} job_id={job_id} "
+                                f"(Ctrl+C to cancel all, /cancel {job_id} to cancel this job)"
+                            )
+
+                            exec_results = self._wait_for_exec_jobs([job])
+                            if not exec_results:
+                                break
+                            exec_result = exec_results[0]
+                            self._record_exec_result(state=state, exec_result=exec_result)
+                            if (
+                                not self._is_auto_mode()
+                                or write_override_used
+                                or not self._is_write_policy_violation_result(exec_result)
+                            ):
+                                break
+
+                            stderr_text = str(exec_result.get("stderr", "")).strip()
+                            stdout_text = str(exec_result.get("stdout", "")).strip()
+                            stderr_lines = [line for line in stderr_text.splitlines() if line.strip()]
+                            stdout_lines = [line for line in stdout_text.splitlines() if line.strip()]
+                            stderr_preview = "\n".join(stderr_lines[-6:]) if stderr_lines else "(empty)"
+                            stdout_preview = "\n".join(stdout_lines[-6:]) if stdout_lines else "(empty)"
+                            suggested_paths = self._collect_external_path_suggestions(action_input, exec_result)
+                            details = "\n".join(
+                                [
+                                    f"job_name={job_name}",
+                                    f"job_id={str(exec_result.get('job_id', '')).strip() or 'unknown'}",
+                                    "Failure appears to be blocked by workspace write policy.",
+                                    "stdout tail:",
+                                    stdout_preview,
+                                    "stderr tail:",
+                                    stderr_preview,
+                                ]
+                            )
+                            allow_path_raw = ""
+                            if self.write_policy_handler is not None:
+                                try:
+                                    allow_path_raw = str(
+                                        self.write_policy_handler(details, suggested_paths) or ""
+                                    ).strip()
+                                except Exception:
+                                    allow_path_raw = ""
+                            allow_path = self._normalize_allow_path(allow_path_raw)
+                            if not allow_path:
+                                break
+                            allowlist = list(getattr(state, "exec_auto_write_allowlist", []))
+                            if allow_path not in allowlist:
+                                allowlist.append(allow_path)
+                                state.exec_auto_write_allowlist = allowlist
+                            override_note = (
+                                "auto-mode write override approved: "
+                                f"added writable path {allow_path}; retrying current exec once"
+                            )
+                            state.update_state(
+                                text=self._format_history_record(
+                                    state=state,
+                                    role="runtime",
+                                    text=override_note,
+                                ),
+                            )
+                            print()
+                            print(f"runtime> {override_note}")
                             state.save_state()
+                            write_override_used = True
 
                     except Exception as exc:
                         state.update_state(

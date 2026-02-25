@@ -1171,3 +1171,44 @@ def run_core_session():
 Do you know SKILL which is introduced by Anthropic for agent design?
 
 python -m agentic_system --workspace ./runtime_test --provider lmstudio --model-name "zai-org/glm-4.7-flash" --mode controlled
+
+python -m agentic_system \
+  --workspace ../temp \
+  --provider ollama \
+  --model-name "glm-5:cloud" \
+  --mode controlled \
+  --session-id session_92704ce6d047
+
+
+export ZAI_API_KEY="ee470704e1184838a1a19a3709d352da.ENsRaP8mMLjjRNDX"
+# optional (default is already this)
+export ZAI_BASE_URL="https://api.z.ai/api/paas/v4"
+export ZAI_TIMEOUT_SECONDS="300"
+
+python -m agentic_system \
+  --workspace ../temp \
+  --provider zai \
+  --model-name "glm-4.7" \
+  --mode controlled \
+  --session-id session_92704ce6d047
+
+export DEEPSEEK_API_KEY="sk-3342752e96644255b8d9eaa623c8e2fb"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"   
+export DEEPSEEK_TIMEOUT_SECONDS="300"   
+
+    "- action is the structured extraction of the next action from raw_response.",
+    "- action_input is the structured extraction of needed inputs from raw_response.",
+    "- action must be exactly one of: \"chat_with_requester\", \"keep_reasoning\", or \"exec\".",
+
+
+export ZAI_API_KEY="ee470704e1184838a1a19a3709d352da.ENsRaP8mMLjjRNDX"
+export ZAI_BASE_URL="https://api.z.ai/api/coding/paas/v4"
+export ZAI_TIMEOUT_SECONDS="300"
+
+python -m agentic_system \
+  --workspace ../temp \
+  --provider zai \
+  --model-name "GLM-4.7" \
+  --mode controlled
+
+several issues: 1. the language toggle button only works for the homepage "https://mystery-history-web.vercel.app/". And after tranlate into Chinese, the toggle button still shows Chinese not "EN". And also, in Chinese page, I can't translate back into English. 2. For all other pages, there is no translation effect and the toggle button looks not correct. Means in English page it just shows "EN" (https://mystery-history-web.vercel.app/categories/ancient-mysteries, https://mystery-history-web.vercel.app/posts/antikythera-mechanism for example). Can you first fix the home page issue and then update all other pages based on the homepage's logic?

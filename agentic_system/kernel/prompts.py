@@ -9,6 +9,7 @@ class PromptEngine:
     _AGENT_ROLES_PLACEHOLDER = "{{AGENT_ROLES_FROM_JSON}}"
     _SKILLS_META_PLACEHOLDER = "{{SKILLS_META_FROM_JSON}}"
     _KNOWLEDGE_META_PLACEHOLDER = "{{KNOWLEDGE_META_FROM_JSON}}"
+    _BUILTIN_REFERENCE_LOADERS_PLACEHOLDER = "{{BUILTIN_REFERENCE_LOADERS}}"
     _RUNTIME_WORKSPACE_PLACEHOLDER = "{{RUNTIME_WORKSPACE}}"
     _LATEST_CONTEXT_PLACEHOLDER = "{{LATEST_CONTEXT}}"
     _DEFAULT_RETRY_LIMIT = 3
@@ -143,6 +144,7 @@ class PromptEngine:
         role_name = str(role).strip()
         include_core = role_name == "core_agent"
         include_all = True
+        builtin_loader_skill_ids = {"load-skill", "load-knowledge-docs"}
 
         roots: list[tuple[Path, str]] = []
         if include_core:
@@ -156,6 +158,8 @@ class PromptEngine:
                 continue
             for skill_dir in sorted(path for path in root.iterdir() if path.is_dir()):
                 skill_id = skill_dir.name
+                if skill_id in builtin_loader_skill_ids:
+                    continue
                 skill_md_path = skill_dir / "SKILL.md"
                 if not skill_md_path.exists():
                     continue
@@ -192,6 +196,41 @@ class PromptEngine:
         rows.sort(key=lambda item: (str(item.get("scope", "")), str(item.get("skill_id", ""))))
         if not rows:
             return "- (no skills found)"
+        return "\n".join("- " + json.dumps(row, ensure_ascii=True) for row in rows)
+
+    def _load_builtin_reference_loaders_text(self, role: str) -> str:
+        role_name = str(role).strip()
+        if role_name != "core_agent":
+            return "- (built-in reference loaders not exposed for this role)"
+        rows = [
+            {
+                "loader": "load-skill",
+                "purpose": "Load full SKILL.md and scripts list for a target skill into workflow_history.",
+                "script_path": "skills/all-agents/load-skill/scripts/load_skill.py",
+                "code_type": "python",
+                "required_args": ["--skill-id", "<skill_id>", "--scope", "all-agents|core-agent"],
+                "example_action_input": {
+                    "job_name": "load-skill-search-online-context",
+                    "code_type": "python",
+                    "script_path": "skills/all-agents/load-skill/scripts/load_skill.py",
+                    "script_args": ["--skill-id", "search-online-context", "--scope", "all-agents"],
+                },
+            },
+            {
+                "loader": "load-knowledge-docs",
+                "purpose": "Load selected knowledge docs into workflow_history by doc-id and/or doc-path.",
+                "script_path": "skills/all-agents/load-knowledge-docs/scripts/load_knowledge_docs.py",
+                "code_type": "python",
+                "required_args": ["at least one of --doc-id or --doc-path"],
+                "optional_args": ["--max-docs", "--max-chars-per-doc"],
+                "example_action_input": {
+                    "job_name": "load-knowledge-llm-post-training",
+                    "code_type": "python",
+                    "script_path": "skills/all-agents/load-knowledge-docs/scripts/load_knowledge_docs.py",
+                    "script_args": ["--doc-id", "llm-post-training-rl-overview", "--max-docs", "4"],
+                },
+            },
+        ]
         return "\n".join("- " + json.dumps(row, ensure_ascii=True) for row in rows)
 
     @staticmethod
@@ -282,6 +321,14 @@ class PromptEngine:
             knowledge_lines.append("- (no knowledge docs found)")
         knowledge_section = "\n".join(knowledge_lines)
 
+        loader_lines = [f"Below are built-in reference loaders:"]
+        loader_text = self._load_builtin_reference_loaders_text(role)
+        if loader_text:
+            loader_lines.append(loader_text)
+        else:
+            loader_lines.append("- (no built-in reference loaders found)")
+        loader_section = "\n".join(loader_lines)
+
         text = selected.strip()
         if self._AGENT_ROLES_PLACEHOLDER in text:
             text = text.replace(self._AGENT_ROLES_PLACEHOLDER, roles_section)
@@ -290,6 +337,8 @@ class PromptEngine:
             text = text.replace(self._SKILLS_META_PLACEHOLDER, skills_section)
         if self._KNOWLEDGE_META_PLACEHOLDER in text:
             text = text.replace(self._KNOWLEDGE_META_PLACEHOLDER, knowledge_section)
+        if self._BUILTIN_REFERENCE_LOADERS_PLACEHOLDER in text:
+            text = text.replace(self._BUILTIN_REFERENCE_LOADERS_PLACEHOLDER, loader_section)
         if self._RUNTIME_WORKSPACE_PLACEHOLDER in text:
             text = text.replace(self._RUNTIME_WORKSPACE_PLACEHOLDER, str(self.workspace))
         if self._LATEST_CONTEXT_PLACEHOLDER in text:

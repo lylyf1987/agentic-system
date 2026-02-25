@@ -30,13 +30,14 @@ class AgentRuntime:
         if session_id is not None:
             self.state.load_state()
         self.model_router = ModelRouter(provider=self.provider, model_name=model_name)
-        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=int(100000 * 0.7), compact_keep_last_k=10)
+        self.prompt_engine = PromptEngine(workspace=self.workspace, token_window_limit=int(50000), compact_keep_last_k=10)
         self.engine = FlowEngine(
             workspace=self.workspace,
             mode=self.mode,
             model_router=self.model_router,
             prompt_engine=self.prompt_engine,
             approval_handler=self._default_approval_prompt,
+            write_policy_handler=self._auto_write_override_prompt,
         )
 
         self._persist()
@@ -89,6 +90,29 @@ class AgentRuntime:
             return True, "path"
         return False, "deny"
 
+    @staticmethod
+    def _auto_write_override_prompt(note: str, suggested_paths: list[str]) -> str | None:
+        print()
+        print("Runtime auto-mode write policy blocked external write.")
+        if note.strip():
+            print(note.strip())
+        if suggested_paths:
+            print("Suggested external paths (from command context):")
+            for idx, item in enumerate(suggested_paths, start=1):
+                print(f"  {idx}. {item}")
+        print("Allow one external writable path for this session? [y/N]")
+        choice = input("> ").strip().lower()
+        if choice not in {"y", "yes"}:
+            return None
+        default_path = suggested_paths[0] if suggested_paths else ""
+        if default_path:
+            print(f"Enter writable path (blank uses default: {default_path})")
+            entered = input("> ").strip()
+            return entered or default_path
+        print("Enter writable path (absolute or ~/...):")
+        entered = input("> ").strip()
+        return entered or None
+
     def _help_text(self) -> str:
         return "\n".join(
             [
@@ -117,6 +141,7 @@ class AgentRuntime:
                 f"exec_approval_exact={len(getattr(self.state, 'exec_approval_exact', []))}",
                 f"exec_approval_pattern={len(getattr(self.state, 'exec_approval_pattern', []))}",
                 f"exec_approval_path={len(getattr(self.state, 'exec_approval_path', []))}",
+                f"exec_auto_write_allowlist={len(getattr(self.state, 'exec_auto_write_allowlist', []))}",
             ]
         )
 

@@ -31,6 +31,7 @@ class StorageEngine:
         self.exec_approval_exact: list[str] = []
         self.exec_approval_pattern: list[str] = []
         self.exec_approval_path: list[str] = []
+        self.exec_auto_write_allowlist: list[str] = []
 
     def load_state(self) -> bool:
         if not self.state_path.exists():
@@ -80,6 +81,7 @@ class StorageEngine:
             "exec_approval_exact": self.exec_approval_exact,
             "exec_approval_pattern": self.exec_approval_pattern,
             "exec_approval_path": self.exec_approval_path,
+            "exec_auto_write_allowlist": self.exec_auto_write_allowlist,
         }
 
     def _deserialize_state(self, raw: dict[str, Any]) -> None:
@@ -96,6 +98,7 @@ class StorageEngine:
         exec_approval_exact = raw.get("exec_approval_exact", [])
         exec_approval_pattern = raw.get("exec_approval_pattern", [])
         exec_approval_path = raw.get("exec_approval_path", [])
+        exec_auto_write_allowlist = raw.get("exec_auto_write_allowlist", [])
         self.full_proc_hist = list(full_proc_hist if isinstance(full_proc_hist, list) else [])
         self.workflow_hist = list(workflow_hist if isinstance(workflow_hist, list) else [])
         self.workflow_summary = str(workflow_summary if isinstance(workflow_summary, str) else "")
@@ -103,3 +106,6 @@ class StorageEngine:
         self.exec_approval_exact = list(exec_approval_exact if isinstance(exec_approval_exact, list) else [])
         self.exec_approval_pattern = list(exec_approval_pattern if isinstance(exec_approval_pattern, list) else [])
         self.exec_approval_path = list(exec_approval_path if isinstance(exec_approval_path, list) else [])
+        self.exec_auto_write_allowlist = list(
+            exec_auto_write_allowlist if isinstance(exec_auto_write_allowlist, list) else []
+        )

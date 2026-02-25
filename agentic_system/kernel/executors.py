@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,80 @@ class ExecJob:
     stdout_path: Path
     stderr_path: Path
     started_at: float
+    write_policy_mode: str = "none"
+    write_policy_enabled: bool = False
+    write_policy_backend: str = "none"
+    write_policy_workspace: str = ""
+    write_policy_external_roots: list[str] = field(default_factory=list)
+
+
+def _normalize_external_write_roots(
+    roots: list[str] | None,
+    *,
+    workspace_root: Path,
+) -> list[Path]:
+    out: list[Path] = []
+    if not isinstance(roots, list):
+        return out
+    seen: set[str] = set()
+    for item in roots:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace_root / candidate
+        normalized = candidate.resolve()
+        normalized_text = str(normalized)
+        if normalized_text in seen:
+            continue
+        seen.add(normalized_text)
+        out.append(normalized)
+    return out
+
+
+def _escape_sandbox_path(path: Path) -> str:
+    value = str(path)
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _build_macos_workspace_write_policy_profile(
+    *,
+    workspace_root: Path,
+    external_write_roots: list[Path],
+) -> str:
+    allow_write_roots: list[Path] = [workspace_root]
+    allow_write_roots.extend(external_write_roots)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in allow_write_roots:
+        value = str(item.resolve())
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(item.resolve())
+
+    lines = [
+        "(version 1)",
+        "(allow default)",
+        "(deny file-write*)",
+    ]
+    for root in unique:
+        lines.append(f'(allow file-write* (subpath "{_escape_sandbox_path(root)}"))')
+    return "\n".join(lines)
+
+
+def _build_exec_environment(
+    *,
+    workspace_root: Path,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    runtime_tmp = workspace_root / ".runtime" / "tmp"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    env["TMPDIR"] = str(runtime_tmp)
+    env["TEMP"] = str(runtime_tmp)
+    env["TMP"] = str(runtime_tmp)
+    return env
 
 
 def _normalize_exec_input(action_input: dict[str, object]) -> tuple[str, bool, str, str, list[str]]:
@@ -84,9 +159,11 @@ def start_exec_job(
     workspace: str | Path,
     job_id: str,
     job_name: str = "none",
+    write_policy_mode: str = "none",
+    external_write_roots: list[str] | None = None,
 ) -> ExecJob:
-    cwd = Path(workspace).expanduser().resolve()
-    cwd.mkdir(parents=True, exist_ok=True)
+    workspace_root = Path(workspace).expanduser().resolve()
+    workspace_root.mkdir(parents=True, exist_ok=True)
 
     normalized_code_type, has_path, path_value, script_value, args_value = _normalize_exec_input(action_input)
     command = _build_exec_command(
@@ -97,20 +174,49 @@ def start_exec_job(
         args_value=args_value,
     )
 
-    stdout_fd, stdout_name = tempfile.mkstemp(prefix=f"{job_id}_stdout_", suffix=".log")
-    stderr_fd, stderr_name = tempfile.mkstemp(prefix=f"{job_id}_stderr_", suffix=".log")
+    runtime_logs = workspace_root / ".runtime" / "logs"
+    runtime_logs.mkdir(parents=True, exist_ok=True)
+    stdout_fd, stdout_name = tempfile.mkstemp(prefix=f"{job_id}_stdout_", suffix=".log", dir=str(runtime_logs))
+    stderr_fd, stderr_name = tempfile.mkstemp(prefix=f"{job_id}_stderr_", suffix=".log", dir=str(runtime_logs))
     stdout_path = Path(stdout_name)
     stderr_path = Path(stderr_name)
 
+    resolved_external_roots = _normalize_external_write_roots(
+        external_write_roots,
+        workspace_root=workspace_root,
+    )
+    requested_policy_mode = str(write_policy_mode or "none").strip().lower() or "none"
+    write_policy_enabled = requested_policy_mode == "workspace_write_only"
+    write_policy_backend = "none"
+    launch_command = list(command)
+    if write_policy_enabled:
+        if sys.platform != "darwin":
+            raise RuntimeError(
+                "[runtime] write policy workspace_write_only is currently supported only on macOS"
+            )
+        sandbox_exec = shutil.which("sandbox-exec")
+        if not sandbox_exec:
+            raise RuntimeError(
+                "[runtime] write policy workspace_write_only requires sandbox-exec on macOS"
+            )
+        profile = _build_macos_workspace_write_policy_profile(
+            workspace_root=workspace_root,
+            external_write_roots=resolved_external_roots,
+        )
+        launch_command = [sandbox_exec, "-p", profile, *launch_command]
+        write_policy_backend = "sandbox-exec"
+
+    env = _build_exec_environment(workspace_root=workspace_root)
     stdout_file = os.fdopen(stdout_fd, "w", encoding="utf-8")
     stderr_file = os.fdopen(stderr_fd, "w", encoding="utf-8")
     try:
         process = subprocess.Popen(
-            command,
-            cwd=str(cwd),
+            launch_command,
+            cwd=str(workspace_root),
             stdout=stdout_file,
             stderr=stderr_file,
             start_new_session=True,
+            env=env,
         )
     finally:
         stdout_file.close()
@@ -120,10 +226,15 @@ def start_exec_job(
         job_id=job_id,
         job_name=str(job_name or "").strip() or "none",
         process=process,
-        cwd=cwd,
+        cwd=workspace_root,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         started_at=time.time(),
+        write_policy_mode=requested_policy_mode,
+        write_policy_enabled=write_policy_enabled,
+        write_policy_backend=write_policy_backend,
+        write_policy_workspace=str(workspace_root),
+        write_policy_external_roots=[str(path) for path in resolved_external_roots],
     )
 
 
@@ -191,6 +302,11 @@ def collect_exec_job_result(
         "stdout": stdout,
         "stderr": stderr,
         "return_code": int(job.process.returncode or 0),
+        "write_policy_enabled": bool(job.write_policy_enabled),
+        "write_policy_mode": str(job.write_policy_mode),
+        "write_policy_backend": str(job.write_policy_backend),
+        "write_policy_workspace": str(job.write_policy_workspace),
+        "write_policy_external_roots": [str(item) for item in job.write_policy_external_roots],
     }
 
 
@@ -199,12 +315,16 @@ def execute(
     action_input: dict[str, object],
     workspace: str | Path,
     timeout_seconds: int | None = None,
+    write_policy_mode: str = "none",
+    external_write_roots: list[str] | None = None,
 ) -> dict[str, str]:
     job = start_exec_job(
         action_input=action_input,
         workspace=workspace,
         job_id="exec_job_sync",
         job_name="sync_exec",
+        write_policy_mode=write_policy_mode,
+        external_write_roots=external_write_roots,
     )
     try:
         if timeout_seconds is not None:
