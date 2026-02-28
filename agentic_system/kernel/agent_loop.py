@@ -1,3 +1,5 @@
+"""Core agent loop orchestration: prompting, action handling, and exec control."""
+
 from __future__ import annotations
 
 import json
@@ -35,6 +37,8 @@ DEFAULT_LIMITS = {
 
 
 class FlowEngine:
+    """Drive the core-agent reasoning loop against runtime state/environment."""
+
     def __init__(
         self,
         workspace: str | Path,
@@ -45,6 +49,7 @@ class FlowEngine:
         write_policy_handler: Callable[[str, list[str]], str | None] | None = None,
         limits: dict[str, int] | None = None,
     ) -> None:
+        """Initialize orchestration dependencies and safety/loop limits."""
         self.workspace = Path(workspace).expanduser().resolve()
         self.mode = mode
         self.model_router = model_router
@@ -57,6 +62,7 @@ class FlowEngine:
             self.limits.update(limits)
 
     def _ensure_runtime_fields(self, state: StorageEngine) -> None:
+        """Backfill state fields for compatibility with older session payloads."""
         if not isinstance(getattr(state, "full_proc_hist", None), list):
             state.full_proc_hist = []
         if not isinstance(getattr(state, "workflow_hist", None), list):
@@ -75,9 +81,11 @@ class FlowEngine:
             state.exec_auto_write_allowlist = []
 
     def _is_auto_mode(self) -> bool:
+        """Return True when runtime is in no-confirmation auto mode."""
         return str(self.mode).strip().lower() == "auto"
 
     def _normalize_allow_path(self, value: str) -> str:
+        """Resolve user-entered allow path into normalized absolute path string."""
         raw = str(value or "").strip()
         if not raw:
             return ""
@@ -91,6 +99,7 @@ class FlowEngine:
         action_input: dict[str, Any],
         exec_result: dict[str, Any] | None = None,
     ) -> list[str]:
+        """Extract candidate external paths from action input and exec outputs."""
         suggestions: list[str] = []
         seen: set[str] = set()
 
@@ -144,6 +153,7 @@ class FlowEngine:
 
     @staticmethod
     def _is_write_policy_violation_result(exec_result: dict[str, Any]) -> bool:
+        """Heuristic detection for workspace-write policy denial failures."""
         if not isinstance(exec_result, dict):
             return False
         if not bool(exec_result.get("write_policy_enabled", False)):
@@ -163,6 +173,7 @@ class FlowEngine:
         return any(marker in combined_text for marker in markers)
 
     def _record_exec_result(self, state: StorageEngine, exec_result: dict[str, Any]) -> None:
+        """Persist and print formatted runtime exec result block."""
         exec_lines = build_exec_result_lines(exec_result)
         if not exec_lines:
             return
@@ -187,6 +198,7 @@ class FlowEngine:
         state.save_state()
 
     def _emit_runtime_note(self, state: StorageEngine, text: str) -> None:
+        """Emit one runtime note to history/UI and persist immediately."""
         state.update_state(
             text=format_history_record(
                 state=state,
@@ -202,6 +214,7 @@ class FlowEngine:
         self,
         action_input: dict[str, Any],
     ) -> str:
+        """Build requester-facing approval prompt including script preview."""
         code_type = str(action_input.get("code_type", "bash")).strip().lower() or "bash"
         job_name = str(action_input.get("job_name", "none")).strip() or "none"
         script_path = str(action_input.get("script_path", "")).strip()
@@ -225,6 +238,7 @@ class FlowEngine:
         return "\n".join(lines)
 
     def _confirm_exec(self, state: StorageEngine, action_input: dict[str, Any]) -> bool:
+        """Apply approval cache rules and interactive approval when needed."""
         if str(self.mode).strip().lower() == "auto":
             return True
         exact_signature = build_exec_exact_signature(action_input)
@@ -261,6 +275,7 @@ class FlowEngine:
 
     @staticmethod
     def _build_exec_cancel_note(job_id: str, reason: str, signals: list[str]) -> str:
+        """Create runtime stderr note describing requester-triggered termination."""
         signal_text = " -> ".join(signals) if signals else "none"
         return "\n".join(
             [
@@ -278,6 +293,7 @@ class FlowEngine:
         stderr_notes_by_job: dict[str, str],
         reason: str,
     ) -> None:
+        """Cancel all running jobs and capture termination notes per job."""
         for job_id in list(running_jobs.keys()):
             job = running_jobs.get(job_id)
             if job is None:
@@ -300,6 +316,7 @@ class FlowEngine:
             status_by_job[job_id] = "cancelled"
 
     def _wait_for_exec_jobs(self, jobs: list[ExecJob]) -> list[dict[str, Any]]:
+        """Wait for launched jobs, support `/cancel`/Ctrl+C, and collect results."""
         if not jobs:
             return []
 
@@ -326,6 +343,7 @@ class FlowEngine:
         while running_jobs:
             now = time.time()
             if now - last_status_at >= 0.25:
+                # Single-line spinner status updates without growing terminal output.
                 marker = spinner[spinner_index % len(spinner)]
                 spinner_index += 1
                 ids = list(running_jobs.keys())
@@ -482,6 +500,7 @@ class FlowEngine:
 
     @staticmethod
     def _normalize_llm_response(response: Any) -> tuple[str, str, dict[str, Any]]:
+        """Normalize parsed model payload into (raw_response, action, action_input)."""
         if not isinstance(response, dict):
             return "", "none", {}
         raw_response = str(response.get("raw_response", ""))
@@ -492,6 +511,7 @@ class FlowEngine:
 
     @staticmethod
     def _is_transient_model_error(text: str) -> bool:
+        """Classify retriable transport/provider overload failures."""
         payload = str(text or "").strip().lower()
         if not payload:
             return False
@@ -511,9 +531,11 @@ class FlowEngine:
 
     @staticmethod
     def _retry_delay_seconds_for_attempt(attempt_index: int) -> int:
+        """Simple exponential backoff capped to avoid long blocking delays."""
         return min(8, max(1, 2**max(0, attempt_index)))
 
     def _build_stream_printer(self) -> tuple[Callable[[str], None], Callable[[], None]]:
+        """Build token printer and stream-finalizer for core_agent UI output."""
         def on_token(token: str) -> None:
             if not token:
                 return
@@ -531,6 +553,7 @@ class FlowEngine:
         model_router: ModelRouter,
         prompt_engine: PromptEngine,
     ) -> tuple[str, dict[str, Any], bool]:
+        """Call core model with retries/validation; persist only valid outputs."""
         max_invalid_output_retries = int(self.limits.get("max_invalid_output_retries", 3))
         last_failure_kind = "invalid_output"
         for attempt_idx in range(max_invalid_output_retries):
@@ -625,6 +648,7 @@ class FlowEngine:
         return "chat_with_requester", {}, False
 
     def _handle_exec_action(self, state: StorageEngine, action_input: Any) -> bool:
+        """Execute one approved job and process write-policy override flow."""
         if not isinstance(action_input, dict):
             self._emit_runtime_note(state=state, text="exec action requires object action_input")
             return True
@@ -715,6 +739,7 @@ class FlowEngine:
         invalid_action_retries: int,
         max_invalid_action_retries: int,
     ) -> tuple[int, bool]:
+        """Record invalid action correction note and enforce retry cap."""
         next_retries = invalid_action_retries + 1
         correction = (
             f"You chose invalid next action '{action}'. Please double check your last statement "
@@ -735,6 +760,7 @@ class FlowEngine:
         self,
         state: StorageEngine,
     ) -> None:
+        """Run inner loop until handoff, limits reached, or unrecoverable failure."""
         model_router = self.model_router
         prompt_engine = self.prompt_engine
         if model_router is None or prompt_engine is None:
@@ -801,6 +827,7 @@ class FlowEngine:
         state: StorageEngine,
         user_text: str,
     ) -> None:
+        """Append requester message and execute one core-agent interaction cycle."""
         model_router = self.model_router
         prompt_engine = self.prompt_engine
         if model_router is None or prompt_engine is None:

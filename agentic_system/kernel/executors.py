@@ -1,3 +1,5 @@
+"""Execution backend for runtime `exec` actions (async jobs + sync helper)."""
+
 from __future__ import annotations
 
 import os
@@ -15,6 +17,8 @@ from typing import Any
 
 @dataclass
 class ExecJob:
+    """Runtime handle for one launched exec process and its log metadata."""
+
     job_id: str
     job_name: str
     process: subprocess.Popen[Any]
@@ -34,6 +38,7 @@ def _normalize_external_write_roots(
     *,
     workspace_root: Path,
 ) -> list[Path]:
+    """Resolve and deduplicate external write roots against workspace context."""
     out: list[Path] = []
     if not isinstance(roots, list):
         return out
@@ -64,6 +69,7 @@ def _build_macos_workspace_write_policy_profile(
     workspace_root: Path,
     external_write_roots: list[Path],
 ) -> str:
+    """Build sandbox-exec profile that only allows writes under approved roots."""
     allow_write_roots: list[Path] = [workspace_root]
     allow_write_roots.extend(external_write_roots)
     unique: list[Path] = []
@@ -89,6 +95,7 @@ def _build_exec_environment(
     *,
     workspace_root: Path,
 ) -> dict[str, str]:
+    """Create child env with runtime-local tmp directories inside workspace."""
     env = dict(os.environ)
     runtime_tmp = workspace_root / ".runtime" / "tmp"
     runtime_tmp.mkdir(parents=True, exist_ok=True)
@@ -99,6 +106,7 @@ def _build_exec_environment(
 
 
 def _normalize_exec_input(action_input: dict[str, object]) -> tuple[str, bool, str, str, list[str]]:
+    """Validate and normalize exec action_input into command-building primitives."""
     if not isinstance(action_input, dict):
         raise ValueError("exec action requires object action_input")
 
@@ -142,6 +150,7 @@ def _build_exec_command(
     script_value: str,
     args_value: list[str],
 ) -> list[str]:
+    """Build subprocess argv for python/bash and inline/path execution modes."""
     if normalized_code_type == "python":
         if has_path:
             return [sys.executable, path_value, *args_value]
@@ -162,6 +171,7 @@ def start_exec_job(
     write_policy_mode: str = "none",
     external_write_roots: list[str] | None = None,
 ) -> ExecJob:
+    """Launch an exec job, writing stdout/stderr to per-job log files."""
     workspace_root = Path(workspace).expanduser().resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
 
@@ -190,6 +200,7 @@ def start_exec_job(
     write_policy_backend = "none"
     launch_command = list(command)
     if write_policy_enabled:
+        # Strict auto mode writes are enforced with macOS sandbox-exec profile.
         if sys.platform != "darwin":
             raise RuntimeError(
                 "[runtime] write policy workspace_write_only is currently supported only on macOS"
@@ -245,6 +256,7 @@ def terminate_exec_job(
     sigint_wait_seconds: float = 1.5,
     sigterm_wait_seconds: float = 1.5,
 ) -> dict[str, Any]:
+    """Terminate a running job process group with escalating signals."""
     if job.process.poll() is not None:
         return {"reason": reason, "signals": []}
 
@@ -280,6 +292,7 @@ def collect_exec_job_result(
     *,
     stderr_append: str = "",
 ) -> dict[str, Any]:
+    """Collect completed job logs and attach optional runtime stderr note."""
     if job.process.poll() is None:
         job.process.wait()
 
@@ -318,6 +331,7 @@ def execute(
     write_policy_mode: str = "none",
     external_write_roots: list[str] | None = None,
 ) -> dict[str, str]:
+    """Synchronous wrapper used by tests/utility callers over async job API."""
     job = start_exec_job(
         action_input=action_input,
         workspace=workspace,

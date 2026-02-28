@@ -1,3 +1,5 @@
+"""Helpers for formatting history lines and exec-approval signatures."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +10,7 @@ from .storage import StorageEngine
 
 
 def normalize_script_args(raw_script_args: Any) -> list[str]:
+    """Normalize script_args from list/string input into clean list form."""
     if isinstance(raw_script_args, (list, tuple)):
         return [str(arg).strip() for arg in raw_script_args if str(arg).strip()]
     if isinstance(raw_script_args, str):
@@ -22,6 +25,7 @@ def normalize_script_args(raw_script_args: Any) -> list[str]:
 
 
 def build_exec_exact_signature(action_input: dict[str, Any]) -> str:
+    """Build exact exec signature used for per-command approval caching."""
     code_type = str(action_input.get("code_type", "bash")).strip().lower() or "bash"
     script_path = str(action_input.get("script_path", "")).strip()
     script = str(action_input.get("script", "")).strip()
@@ -37,6 +41,7 @@ def build_exec_exact_signature(action_input: dict[str, Any]) -> str:
 
 
 def build_exec_pattern_signature(action_input: dict[str, Any]) -> str:
+    """Build pattern-level signature (path or compact inline script prefix)."""
     code_type = str(action_input.get("code_type", "bash")).strip().lower() or "bash"
     script_path = str(action_input.get("script_path", "")).strip()
     script = str(action_input.get("script", "")).strip()
@@ -47,6 +52,7 @@ def build_exec_pattern_signature(action_input: dict[str, Any]) -> str:
 
 
 def build_exec_path_signature(action_input: dict[str, Any]) -> str:
+    """Build path-only signature for script_path-based blanket approvals."""
     code_type = str(action_input.get("code_type", "bash")).strip().lower() or "bash"
     script_path = str(action_input.get("script_path", "")).strip()
     if not script_path:
@@ -55,6 +61,7 @@ def build_exec_path_signature(action_input: dict[str, Any]) -> str:
 
 
 def format_exec_value_lines(label: str, value: Any) -> list[str]:
+    """Render stdout/stderr block lines; pretty-print JSON payloads when possible."""
     lines = [f"  - {label}:"]
     raw_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=True)
     text = str(raw_text)
@@ -80,6 +87,7 @@ def format_history_block(
     first_line: str,
     continuation_lines: list[str],
 ) -> str:
+    """Create multi-line history record with timestamped role header."""
     role_name = str(role or "").strip() or "runtime"
     prefix = f"[{state.utc_now_iso()}] {role_name}> "
     lines = [f"{prefix}{first_line}"]
@@ -89,6 +97,7 @@ def format_history_block(
 
 
 def format_ui_block(role: str, first_line: str, continuation_lines: list[str]) -> str:
+    """Create UI-facing multi-line record with role-only header."""
     role_name = str(role or "").strip() or "runtime"
     prefix = f"{role_name}> "
     lines = [f"{prefix}{first_line}"]
@@ -98,6 +107,7 @@ def format_ui_block(role: str, first_line: str, continuation_lines: list[str]) -
 
 
 def build_exec_result_lines(exec_result: Any) -> list[str]:
+    """Build readable runtime lines for an exec result payload."""
     if not isinstance(exec_result, dict):
         lines: list[str] = []
         lines.append('job "none" with id unknown failed with the stdout and stderr below')
@@ -127,6 +137,7 @@ def build_exec_result_lines(exec_result: Any) -> list[str]:
 
 
 def format_history_record(state: StorageEngine, role: str, text: str) -> str:
+    """Format a single-line history record with UTC timestamp prefix."""
     role_name = str(role or "").strip() or "runtime"
     return f"[{state.utc_now_iso()}] {role_name}> {str(text or '')}"
 
@@ -137,6 +148,7 @@ def format_core_agent_record(
     action: str,
     action_input: Any,
 ) -> str:
+    """Format core-agent record with raw response and structured action metadata."""
     action_name = str(action or "").strip().lower() or "unknown"
     payload = dict(action_input) if isinstance(action_input, dict) else {}
     prefix = f"[{state.utc_now_iso()}] core_agent> "

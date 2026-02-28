@@ -1,3 +1,5 @@
+"""CLI entrypoint for launching the local agent runtime."""
+
 from __future__ import annotations
 
 import argparse
@@ -7,6 +9,7 @@ from .runtime import AgentRuntime
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build CLI arguments for runtime/provider/session configuration."""
     parser = argparse.ArgumentParser(description="Agentic System (clean runtime kernel)")
     parser.add_argument(
         "--provider",
@@ -64,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Parse CLI args, initialize runtime, and start the interactive loop."""
     parser = build_parser()
     args = parser.parse_args()
     workspace = Path(args.workspace).expanduser().resolve()

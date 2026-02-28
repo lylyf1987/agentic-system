@@ -1,3 +1,5 @@
+"""Persistent session storage and lightweight history/action bookkeeping."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +10,8 @@ from uuid import uuid4
 
 
 class StorageEngine:
+    """Manage session state serialization for runtime and agent loop."""
+
     def __init__(self, workspace: str | Path, session_id: str | None = None) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
@@ -34,6 +38,7 @@ class StorageEngine:
         self.exec_auto_write_allowlist: list[str] = []
 
     def load_state(self) -> bool:
+        """Load state from disk if present; returns False when missing/invalid."""
         if not self.state_path.exists():
             return False
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
@@ -43,6 +48,7 @@ class StorageEngine:
         return True
 
     def save_state(self) -> None:
+        """Atomically persist current state payload to disk."""
         tmp = self.state_path.with_suffix(".tmp")
         payload = self._serialize_state()
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -52,6 +58,7 @@ class StorageEngine:
         self,
         text: str,
     ) -> None:
+        """Append one formatted record to both full and workflow histories."""
         line = str(text or "")
         self.full_proc_hist.append(line)
         self.workflow_hist.append(line)
@@ -66,6 +73,7 @@ class StorageEngine:
         return f"[{cls.utc_now_iso()}] {role}> action={action} action_input={payload}"
 
     def append_action(self, role: str, action: str, action_input: Any) -> None:
+        """Record normalized action selection for debug/status inspection."""
         role_name = str(role or "").strip() or "agent"
         action_name = str(action or "").strip().lower() or "unknown"
         payload = dict(action_input) if isinstance(action_input, dict) else {}

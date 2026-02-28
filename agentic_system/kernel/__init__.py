@@ -1,3 +1,5 @@
+"""Kernel exports for orchestration, prompting, and storage components."""
+
 from .agent_loop import FlowEngine
 from .prompts import PromptEngine
 from .storage import StorageEngine

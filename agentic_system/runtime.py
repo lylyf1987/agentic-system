@@ -1,3 +1,5 @@
+"""Interactive runtime host for the agent loop and session state."""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +19,8 @@ from .kernel.model_router import ModelRouter
 
 
 class AgentRuntime:
+    """Own runtime lifecycle: bootstrap assets, read user input, and drive loop."""
+
     _CMD_EXIT = "__EXIT__"
     _CMD_REFRESH = "__REFRESH__"
     _HELP_TEXT = "\n".join(
@@ -70,6 +74,7 @@ class AgentRuntime:
         return str(value).strip() if value is not None else ""
 
     def _initialize_kernel(self, *, session_id: str | None, model_name: str | None) -> None:
+        """Initialize storage, model routing, prompting, and orchestration engines."""
         self.state = StorageEngine(workspace=self.workspace, session_id=session_id)
         if session_id is not None:
             self.state.load_state()
@@ -89,12 +94,14 @@ class AgentRuntime:
         )
 
     def _configure_skill_provider_environment(self) -> None:
+        """Expose image skill provider/model choices via environment variables."""
         os.environ["IMAGE_ANALYSIS_PROVIDER"] = self.image_analysis_provider
         os.environ["IMAGE_ANALYSIS_MODEL"] = self.image_analysis_model
         os.environ["IMAGE_GENERATION_PROVIDER"] = self.image_generation_provider
         os.environ["IMAGE_GENERATION_MODEL"] = self.image_generation_model
 
     def _initialize_input_mode(self) -> None:
+        """Enable multiline prompt-toolkit input with Ctrl+D submit."""
         try:
             bindings = KeyBindings()
 
@@ -113,6 +120,7 @@ class AgentRuntime:
         return "... "
 
     def _read_user_input(self, prompt: str) -> str:
+        """Read one user message using prompt-toolkit when available."""
         if not self._multiline_input_enabled or self._prompt_session is None:
             return input(prompt)
         return str(
@@ -124,6 +132,7 @@ class AgentRuntime:
         )
 
     def _bootstrap_runtime_assets(self) -> None:
+        """Sync packaged prompts/skills into the runtime workspace."""
         runtime_prompts_root = self.workspace / "prompts"
         runtime_skills_root = self.workspace / "skills"
         runtime_prompts_root.mkdir(parents=True, exist_ok=True)
@@ -132,6 +141,7 @@ class AgentRuntime:
         self._copy_packaged_skills(runtime_skills_root)
 
     def _copy_packaged_prompts(self, runtime_prompts_root: Path) -> None:
+        """Copy runtime prompt templates from package into workspace."""
         for file_name in ("agent_system_prompt.json", "agent_role_description.json"):
             source = self.packaged_prompts_root / file_name
             target = runtime_prompts_root / file_name
@@ -139,6 +149,7 @@ class AgentRuntime:
                 shutil.copy2(source, target)
 
     def _copy_packaged_skills(self, runtime_skills_root: Path) -> None:
+        """Replace runtime skill folders with packaged built-ins on each start."""
         for scope in ("core-agent", "all-agents"):
             source_scope = self.packaged_skills_root / scope
             target_scope = runtime_skills_root / scope
@@ -156,6 +167,7 @@ class AgentRuntime:
 
     @staticmethod
     def _default_approval_prompt(signature: str) -> tuple[bool, str]:
+        """Prompt requester for execution approval scope in controlled mode."""
         print()
         print("Runtime confirmation required for exec action.")
         print(signature)
@@ -177,6 +189,7 @@ class AgentRuntime:
 
     @staticmethod
     def _auto_write_override_prompt(note: str, suggested_paths: list[str]) -> str | None:
+        """Ask requester for one-off external write override in auto mode."""
         print()
         print("Runtime auto-mode write policy blocked external write.")
         if note.strip():
@@ -209,6 +222,7 @@ class AgentRuntime:
         return "(empty)"
 
     def _status_overview_text(self) -> str:
+        """Build compact runtime/session overview for `/status`."""
         return "\n".join(
             [
                 f"session_id={self.state.session_id}",
@@ -229,6 +243,7 @@ class AgentRuntime:
         )
 
     def _status_text(self, target: str) -> str:
+        """Render `/status` output for a specific target payload."""
         normalized_target = str(target).strip().lower()
         if not normalized_target:
             return self._status_overview_text()
@@ -247,6 +262,7 @@ class AgentRuntime:
         return self._render_status_value(status_values[normalized_target])
 
     def _handle_command(self, command_line: str) -> str:
+        """Process built-in slash commands and return printable output token/text."""
         parts = command_line.split(maxsplit=1)
         cmd = parts[0].lower()
         if cmd == "/help":
@@ -261,6 +277,7 @@ class AgentRuntime:
         return f"Unknown command: {cmd}. Use /help."
 
     def start(self, show_banner: bool = True) -> int:
+        """Run interactive REPL until requester exits or EOF occurs."""
         self._bootstrap_runtime_assets()
         if show_banner:
             print(f"Session {self.state.session_id} started in provider={self.provider}, mode={self.mode}")
@@ -310,6 +327,7 @@ class AgentRuntime:
             self.shutdown()
 
     def shutdown(self) -> None:
+        """Persist runtime state before process exit."""
         self._persist()
 
     def _persist(self) -> None:

@@ -1,3 +1,5 @@
+"""Prompt construction and context compaction/summarization orchestration."""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +8,8 @@ from typing import Any
 
 
 class PromptEngine:
+    """Build role prompts and manage workflow memory under token constraints."""
+
     _AGENT_ROLES_PLACEHOLDER = "{{AGENT_ROLES_FROM_JSON}}"
     _SKILLS_META_PLACEHOLDER = "{{SKILLS_META_FROM_JSON}}"
     _KNOWLEDGE_META_PLACEHOLDER = "{{KNOWLEDGE_META_FROM_JSON}}"
@@ -89,6 +93,7 @@ class PromptEngine:
         token_window_limit: int = int(256000*0.75),
         compact_keep_last_k: int = 10,
     ) -> None:
+        """Initialize runtime prompt/skill/knowledge roots and token controls."""
         self.workspace = Path(workspace).expanduser().resolve()
         self.runtime_prompts_root = self.workspace / "prompts"
         self.runtime_skills_root = self.workspace / "skills"
@@ -100,6 +105,7 @@ class PromptEngine:
 
     @staticmethod
     def _normalize_map(raw: Any) -> dict[str, str]:
+        """Normalize JSON map values into string blocks."""
         if not isinstance(raw, dict):
             return {}
         normalized: dict[str, str] = {}
@@ -115,6 +121,7 @@ class PromptEngine:
 
     @classmethod
     def _load_json_map(cls, path: Path) -> dict[str, str]:
+        """Load role->text mapping JSON; return empty map on any parse error."""
         if not path.exists():
             return {}
         try:
@@ -124,10 +131,12 @@ class PromptEngine:
         return cls._normalize_map(raw)
 
     def _load_system_prompts(self) -> dict[str, str]:
+        """Load runtime system prompt mapping from workspace prompts folder."""
         return self._load_json_map(self.system_prompts_path)
 
     @staticmethod
     def _parse_frontmatter(text: str) -> dict[str, str]:
+        """Parse simple YAML-like frontmatter block from SKILL.md files."""
         lines = text.splitlines()
         if not lines or lines[0].strip() != "---":
             return {}
@@ -149,6 +158,7 @@ class PromptEngine:
 
     @staticmethod
     def _parse_csv_field(value: Any) -> list[str]:
+        """Parse comma-separated metadata field into trimmed list values."""
         if value is None:
             return []
         raw = str(value).strip()
@@ -157,6 +167,7 @@ class PromptEngine:
         return [item.strip() for item in raw.split(",") if item.strip()]
 
     def _load_skill_meta_text(self, role: str) -> str:
+        """Load skill metadata rows exposed to the specified role prompt."""
         role_name = str(role).strip()
         include_core = role_name == "core_agent"
         include_all = True
@@ -215,6 +226,7 @@ class PromptEngine:
         return "\n".join("- " + json.dumps(row, ensure_ascii=True) for row in rows)
 
     def _load_builtin_reference_loaders_text(self, role: str) -> str:
+        """Expose built-in loader script usage metadata for core agent only."""
         role_name = str(role).strip()
         if role_name != "core_agent":
             return "- (built-in reference loaders not exposed for this role)"
@@ -251,6 +263,7 @@ class PromptEngine:
 
     @staticmethod
     def _normalize_tags(value: Any) -> list[str]:
+        """Normalize tags field from list/string into list[str]."""
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         if isinstance(value, str):
@@ -258,6 +271,7 @@ class PromptEngine:
         return []
 
     def _load_knowledge_meta_text(self, role: str, limit: int = 80) -> str:
+        """Load lightweight knowledge-doc metadata rows for prompt discovery."""
         role_name = str(role).strip()
         if role_name != "core_agent":
             return "- (knowledge meta not exposed for this role)"
@@ -299,6 +313,7 @@ class PromptEngine:
         return "\n".join("- " + json.dumps(row, ensure_ascii=True) for row in rows)
 
     def _get_system_prompt(self, role: str) -> str:
+        """Resolve role system prompt and inject dynamic metadata placeholders."""
         role = str(role).strip()
         if role == "workflow_summarizer":
             return self.WORKFLOW_SUMMARIZER_PROMPT
@@ -362,6 +377,7 @@ class PromptEngine:
 
     @staticmethod
     def _extract_latest_context(workflow_history_lines: list[str]) -> str:
+        """Return last non-empty workflow history line."""
         for line in reversed(workflow_history_lines):
             text = str(line).strip()
             if text:
@@ -375,6 +391,7 @@ class PromptEngine:
         workflow_summary: str,
         workflow_history_lines: list[str],
     ) -> str:
+        """Compose final core-agent prompt with latest context/summary/history."""
         latest_context = self._extract_latest_context(workflow_history_lines)
         sections: list[str] = []
         if system_prompt.strip():
@@ -407,6 +424,7 @@ class PromptEngine:
         workflow_summary: str,
         workflow_history_text: str,
     ) -> str:
+        """Compose observer-role prompt payload (summary + target history text)."""
         sections: list[str] = []
         if system_prompt.strip():
             sections.append(system_prompt.strip())
@@ -433,6 +451,7 @@ class PromptEngine:
         value_key: str,
         require_non_empty: bool,
     ) -> tuple[str | None, str]:
+        """Call observer model with retry policy and return parsed value/error."""
         format_attempts = 0
         other_attempts = 0
         while True:
@@ -476,6 +495,7 @@ class PromptEngine:
         model_router: Any,
         compact_keep_last_k: int
     ) -> None:
+        """Compact older workflow records into one synthetic compactor record."""
         head = state.workflow_hist[:-compact_keep_last_k] if compact_keep_last_k < len(state.workflow_hist) else []
         tail = state.workflow_hist[-compact_keep_last_k:] if compact_keep_last_k > 0 else []
         workflow_summary = state.workflow_summary if isinstance(state.workflow_summary, str) else ""
@@ -509,6 +529,7 @@ class PromptEngine:
         state: Any,
         model_router: Any,
     ) -> None:
+        """Refresh long-term workflow summary using summarizer role output."""
         if state is None or model_router is None:
             return
         workflow_history: list[str] = getattr(state, "workflow_hist", [])
@@ -542,6 +563,7 @@ class PromptEngine:
 
     @staticmethod
     def _is_missing_output_block_error(parse_error: str) -> bool:
+        """Identify parse errors that indicate missing required output tags."""
         text = str(parse_error or "").strip().lower()
         return (
             "missing <output>...</output> block" in text
@@ -554,6 +576,7 @@ class PromptEngine:
         state: Any | None = None,
         model_router: Any | None = None,
     ) -> str:
+        """Build final role prompt and trigger compaction when token budget is exceeded."""
         system_prompt = self._get_system_prompt(role)
         workflow_summary = str(getattr(state, "workflow_summary", "")).strip()
         workflow_history: list[str] = getattr(state, "workflow_hist", [])

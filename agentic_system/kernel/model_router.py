@@ -1,3 +1,5 @@
+"""Model-provider adapters plus response parsing/validation for agent roles."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +13,8 @@ from urllib.request import Request, urlopen
 
 @dataclass
 class ModelResponse:
+    """Normalized response shape returned by adapter implementations."""
+
     provider: str
     model: str
     text: str
@@ -18,6 +22,8 @@ class ModelResponse:
 
 @dataclass(frozen=True)
 class OpenAICompatProviderConfig:
+    """Environment-key map for providers speaking OpenAI-compatible chat API."""
+
     base_url_env_keys: tuple[str, ...]
     default_base_url: str
     api_key_env_keys: tuple[str, ...]
@@ -29,6 +35,7 @@ class OpenAICompatProviderConfig:
 
 
 def _first_env_value(keys: tuple[str, ...], default: str = "") -> str:
+    """Return first non-empty environment variable value from ordered keys."""
     for key in keys:
         value = os.getenv(key, "").strip()
         if value:
@@ -37,6 +44,7 @@ def _first_env_value(keys: tuple[str, ...], default: str = "") -> str:
 
 
 def _first_int_env_value(keys: tuple[str, ...], default: int) -> int:
+    """Return first parseable int env value from ordered keys, else default."""
     for key in keys:
         value = os.getenv(key, "").strip()
         if not value:
@@ -49,6 +57,7 @@ def _first_int_env_value(keys: tuple[str, ...], default: int) -> int:
 
 
 def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: int = 300) -> dict[str, Any]:
+    """POST JSON and raise normalized runtime errors on HTTP/network failures."""
     req = Request(
         url=url,
         method="POST",
@@ -66,6 +75,8 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeo
 
 
 class OllamaAdapter:
+    """Direct Ollama adapter using `/api/generate` with optional streaming."""
+
     provider = "ollama"
 
     def __init__(self) -> None:
@@ -82,6 +93,7 @@ class OllamaAdapter:
         stream: bool = False,
         chunk_callback: Callable[[str], None] | None = None,
     ) -> ModelResponse:
+        """Generate text through Ollama; optionally stream chunks to callback."""
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
@@ -129,6 +141,8 @@ class OllamaAdapter:
 
 
 class OpenAICompatibleAdapter:
+    """Adapter for OpenAI-compatible `/chat/completions` providers."""
+
     def __init__(
         self,
         *,
@@ -139,6 +153,7 @@ class OpenAICompatibleAdapter:
         timeout_env_keys: tuple[str, ...],
         default_timeout_seconds: int = 300,
     ) -> None:
+        """Resolve endpoint/auth/timeout from provider-specific env settings."""
         self.provider = str(provider).strip().lower() or "openai_compatible"
 
         raw_base = _first_env_value(base_url_env_keys, default_base_url).strip()
@@ -151,6 +166,7 @@ class OpenAICompatibleAdapter:
 
     @staticmethod
     def _content_to_text(content: Any) -> str:
+        """Normalize content field that may be string or structured content list."""
         if isinstance(content, str):
             return content
         if not isinstance(content, list):
@@ -165,6 +181,7 @@ class OpenAICompatibleAdapter:
 
     @classmethod
     def _extract_response_text(cls, payload: dict[str, Any]) -> str:
+        """Extract non-stream text from OpenAI-compatible completion payload."""
         choices = payload.get("choices", [])
         if not isinstance(choices, list) or not choices:
             return ""
@@ -183,6 +200,7 @@ class OpenAICompatibleAdapter:
 
     @classmethod
     def _extract_stream_piece(cls, payload: dict[str, Any]) -> str:
+        """Extract one stream delta/text chunk from completion event payload."""
         choices = payload.get("choices", [])
         if not isinstance(choices, list) or not choices:
             return ""
@@ -206,6 +224,7 @@ class OpenAICompatibleAdapter:
         stream: bool = False,
         chunk_callback: Callable[[str], None] | None = None,
     ) -> ModelResponse:
+        """Generate text via chat completions with optional SSE streaming parse."""
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -256,6 +275,8 @@ class OpenAICompatibleAdapter:
 
 
 class ModelRouter:
+    """Route role-specific prompts to provider adapters and validate contracts."""
+
     _PROVIDER_ALIASES: dict[str, str] = {
         "openai-compatible": "openai_compatible",
         "openaicompat": "openai_compatible",
@@ -308,6 +329,7 @@ class ModelRouter:
 
     @classmethod
     def _normalize_provider_name(cls, provider: str) -> str:
+        """Normalize provider aliases to canonical runtime provider key."""
         provider_name = str(provider).strip().lower() or "ollama"
         return cls._PROVIDER_ALIASES.get(provider_name, provider_name)
 
@@ -320,6 +342,7 @@ class ModelRouter:
         default_thinking_model: str,
         summarizer_model_env_key: str,
     ) -> tuple[str, str]:
+        """Resolve core/summarizer model names from overrides + provider env."""
         core_model = model_override or os.getenv(
             core_model_env_key,
             os.getenv(thinking_model_env_key, default_thinking_model),
@@ -328,6 +351,7 @@ class ModelRouter:
         return core_model, summarizer_model
 
     def __init__(self, provider: str = "ollama", model_name: str | None = None) -> None:
+        """Initialize adapter and model map for all runtime LLM roles."""
         provider_name = self._normalize_provider_name(provider)
         self.provider = provider_name
 
@@ -369,6 +393,7 @@ class ModelRouter:
         }
 
     def _select_model(self, role: str) -> str:
+        """Return model name mapped to role, defaulting to core model."""
         role_name = str(role).strip()
         if role_name in self.models:
             return self.models[role_name]
@@ -376,6 +401,7 @@ class ModelRouter:
 
     @staticmethod
     def _has_non_empty_script_args(action_input: dict[str, Any]) -> bool:
+        """Check whether `script_args` carries any non-empty argument value."""
         raw_args = action_input.get("script_args", [])
         if isinstance(raw_args, str):
             return bool(raw_args.strip())
@@ -385,6 +411,7 @@ class ModelRouter:
 
     @classmethod
     def _validate_core_agent_payload(cls, payload: dict[str, Any]) -> list[str]:
+        """Validate core-agent output contract and return all violations."""
         errors: list[str] = []
         raw_response = payload.get("raw_response", "")
         if not isinstance(raw_response, str) or not raw_response.strip():
@@ -421,6 +448,7 @@ class ModelRouter:
 
     @staticmethod
     def _validate_workflow_summarizer_payload(payload: dict[str, Any]) -> list[str]:
+        """Validate workflow summarizer payload shape."""
         candidate = payload.get("workflow_summary")
         if isinstance(candidate, str):
             return []
@@ -428,6 +456,7 @@ class ModelRouter:
 
     @staticmethod
     def _validate_workflow_compactor_payload(payload: dict[str, Any]) -> list[str]:
+        """Validate workflow history compactor payload shape."""
         candidate = payload.get("workflow_hist_compact")
         if isinstance(candidate, str):
             return []
@@ -439,6 +468,7 @@ class ModelRouter:
         text: str,
         role: str,
     ) -> tuple[dict[str, Any] | None, str]:
+        """Parse `<output>{...}</output>` payload and apply role-specific checks."""
         raw = text.strip()
         if not raw:
             return None, "empty model output"
@@ -475,6 +505,7 @@ class ModelRouter:
     def _stream_raw_response_from_chunk_factory(
         callback: Callable[[str], None],
     ) -> Callable[[str], None]:
+        """Create incremental parser that streams only `raw_response` JSON string."""
         key_pattern = re.compile(r'"raw_response"\s*:\s*"')
         search_buffer = ""
         capture = False
@@ -511,6 +542,7 @@ class ModelRouter:
                     continue
 
                 if escape:
+                    # Decode JSON string escapes while streaming the raw_response body.
                     mapping = {
                         '"': '"',
                         "\\": "\\",
@@ -566,6 +598,7 @@ class ModelRouter:
         final_prompt: str | None = None,
         raw_response_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
+        """Run one LLM call and return validated payload with parse diagnostics."""
         prompt = str(final_prompt or "").strip()
         if not prompt:
             return {}
