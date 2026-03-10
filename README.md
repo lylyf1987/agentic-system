@@ -6,7 +6,7 @@ Agentic System is an RL-inspired agent framework built around one small control 
 state -> agent -> action -> environment -> observation -> state
 ```
 
-The LLM is the `Agent`. The `Environment` is a real executable sandbox. `State` is structured context, not a vague chat log. The loop stays grounded by runtime evidence.
+The LLM is the `Agent`. The `Sandbox` is the equipped computer that lets the agent take real actions through bash and python. The `Environment` is the broader interaction surface that executes actions, returns observations, and maintains structured state. `State` is structured context, not a vague chat log. The loop stays grounded by runtime evidence.
 
 ## Elegant Agentic Loop
 
