@@ -116,6 +116,84 @@ Provider model defaults when `--model` is omitted:
 - `lmstudio` -> `local-model`
 - `openai_compatible` -> `local-model`
 
+## Environment Variables
+
+Precedence is:
+
+1. CLI flags
+2. provider-specific environment variables
+3. generic OpenAI-compatible environment variables
+4. built-in defaults
+
+### Core Model Providers
+
+| Variable | Used by | Default / Notes |
+|---|---|---|
+| `OLLAMA_BASE_URL` | core provider, image skills | `http://localhost:11434` for the core provider |
+| `OLLAMA_MODEL` | core provider | `llama3.1:8b` |
+| `OLLAMA_TIMEOUT_SECONDS` | core provider | `300` |
+| `OLLAMA_KEEP_ALIVE` | core provider | optional Ollama keep-alive duration |
+| `OLLAMA_API_KEY` | image generation only | optional; used only by the image-generation script |
+| `DEEPSEEK_BASE_URL` | deepseek provider, image skills | `https://api.deepseek.com` |
+| `DEEPSEEK_API_KEY` | deepseek provider, image skills | required for `--provider deepseek` unless `OPENAI_COMPAT_API_KEY` is set |
+| `DEEPSEEK_MODEL` | deepseek provider | `deepseek-chat` |
+| `LMSTUDIO_BASE_URL` | lmstudio provider, image skills | `http://localhost:1234/v1` |
+| `LMSTUDIO_API_KEY` | lmstudio provider, image skills | optional |
+| `LMSTUDIO_MODEL` | lmstudio provider | `local-model` |
+| `LM_API_TOKEN` | image skills | fallback token for LM Studio / generic OpenAI-compatible image calls |
+| `ZAI_BASE_URL` | zai provider, image skills | `https://api.z.ai/api/paas/v4` |
+| `ZAI_API_KEY` | zai provider, image skills | required for `--provider zai` unless `OPENAI_COMPAT_API_KEY` is set |
+| `ZAI_MODEL` | zai provider | `glm-5` |
+| `OPENAI_COMPAT_BASE_URL` | generic OpenAI-compatible provider, image skills | generic fallback base URL |
+| `OPENAI_COMPAT_API_KEY` | generic OpenAI-compatible provider, zai/deepseek fallback, image skills | generic fallback API key |
+| `OPENAI_COMPAT_MODEL` | generic OpenAI-compatible provider | `local-model` |
+| `OPENAI_COMPAT_TIMEOUT_SECONDS` | generic OpenAI-compatible provider | `300` |
+
+### Tool Backends
+
+| Variable | Used by | Default / Notes |
+|---|---|---|
+| `IMAGE_ANALYSIS_PROVIDER` | image-understanding skill | default set by runtime to `ollama` |
+| `IMAGE_ANALYSIS_MODEL` | image-understanding skill | default set by runtime to `glm-ocr` |
+| `IMAGE_ANALYSIS_BASE_URL` | image-understanding skill | optional explicit override |
+| `IMAGE_ANALYSIS_API_KEY` | image-understanding skill | optional explicit override |
+| `IMAGE_ANALYSIS_TIMEOUT_SECONDS` | image-understanding skill | `120` |
+| `IMAGE_GENERATION_PROVIDER` | image-generation skill | default set by runtime to `ollama` |
+| `IMAGE_GENERATION_MODEL` | image-generation skill | default set by runtime to `x/z-image-turbo` |
+| `IMAGE_GENERATION_BASE_URL` | image-generation skill | optional explicit override |
+| `IMAGE_GENERATION_API_KEY` | image-generation skill | optional explicit override |
+| `SEARXNG_BASE_URL` | search-online-context skill | default set by runtime to `http://127.0.0.1:8888` |
+
+### Runtime Controls
+
+| Variable | Used by | Default / Notes |
+|---|---|---|
+| `AGENTIC_SANDBOX_TIMEOUT` | sandbox executor | `600` seconds |
+
+### Example: Z.AI General API vs Coding API
+
+General API:
+
+```bash
+export ZAI_API_KEY="your-zai-api-key"
+export ZAI_BASE_URL="https://api.z.ai/api/paas/v4"
+agentic-system --workspace . --provider zai --model glm-5
+```
+
+Coding API:
+
+```bash
+export ZAI_API_KEY="your-zai-api-key"
+export ZAI_BASE_URL="https://api.z.ai/api/coding/paas/v4"
+agentic-system --workspace . --provider zai --model glm-5
+```
+
+The runtime appends `/chat/completions`, so the coding setup above targets:
+
+```text
+https://api.z.ai/api/coding/paas/v4/chat/completions
+```
+
 ## Runtime Commands
 
 - `/help` — show commands
