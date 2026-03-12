@@ -8,6 +8,14 @@ state -> agent -> action -> environment -> observation -> state
 
 The LLM is the `Agent`. The `Sandbox` is the equipped computer that lets the agent take real actions through bash and python. The `Environment` is everything the agent can inspect or affect through its `bash` and `python` hands. `State` is structured context, not a vague chat log. The loop stays grounded by runtime evidence.
 
+## Motivation
+
+Popular agentic systems have demonstrated that this interaction pattern is powerful, but many production-grade systems, including tools like Codex and Claude Code, have not been available as fully public end-to-end reference implementations.
+
+At the same time, the open community has produced many useful agent design patterns, but not one widely accepted standard architecture.
+
+This project exists to push toward that standardization. Its goal is to express agentic systems in a clean reinforcement-learning-style setting, where `state`, `action`, `environment`, and `observation` are explicit primitives rather than implicit framework conventions. The intent is to make agent design easier to reason about, compare, extend, and teach.
+
 ## Elegant Agentic Loop
 
 ![Agentic System working loop](design.png)
