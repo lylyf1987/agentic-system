@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agentic_system.providers.ollama import OllamaProvider
 from agentic_system.providers.openai_compat import OpenAICompatProvider
-from agentic_system.context.skill_loader import load_skills, format_skills_for_prompt
-from agentic_system.context.knowledge_loader import load_knowledge_catalog, format_knowledge_for_prompt
-from agentic_system.context.prompt_builder import PromptBuilder
+from agentic_system.core.agent import _load_skills as load_skills
+from agentic_system.core.agent import _load_knowledge_catalog as load_knowledge_catalog
+from agentic_system.core.agent import _build_system_prompt
 
 
 # =========================================================================== #
@@ -165,16 +165,13 @@ def test_skill_loader_empty():
     assert skills == []
     print("  Skill loader (empty) OK")
 
+def test_skill_helpers():
+    """Test helper parsing used by the skill loader."""
+    from agentic_system.core.agent import _parse_csv, _parse_frontmatter
 
-def test_skill_formatter():
-    """Test skill formatting for prompt injection."""
-    text = format_skills_for_prompt([])
-    assert "no skills found" in text
-
-    text2 = format_skills_for_prompt([{"skill_id": "test", "name": "Test"}])
-    assert "test" in text2
-    assert text2.startswith("- ")
-    print("  Skill formatter OK")
+    assert len(_parse_csv("a, b, c")) == 3
+    assert _parse_frontmatter("---\nname: demo\n---\nbody\n") == {"name": "demo"}
+    print("  Skill helper parsing OK")
 
 
 # =========================================================================== #
@@ -228,15 +225,13 @@ def test_knowledge_loader_empty():
     assert catalog == []
     print("  Knowledge loader (empty) OK")
 
+def test_knowledge_helpers():
+    """Test helper normalization used by the knowledge loader."""
+    from agentic_system.core.agent import _normalize_tags
 
-def test_knowledge_formatter():
-    """Test knowledge formatting for prompt injection."""
-    text = format_knowledge_for_prompt([])
-    assert "no knowledge docs found" in text
-
-    text2 = format_knowledge_for_prompt([{"doc_id": "test", "title": "Test"}])
-    assert "test" in text2
-    print("  Knowledge formatter OK")
+    assert len(_normalize_tags("a, b, c")) == 3
+    assert _normalize_tags(["a", " ", "b"]) == ["a", "b"]
+    print("  Knowledge helper normalization OK")
 
 
 # =========================================================================== #
@@ -259,8 +254,7 @@ def test_prompt_builder():
         workspace = Path(td)
         _create_workspace(workspace)
 
-        builder = PromptBuilder(workspace)
-        prompt = builder.build("core_agent")
+        prompt = _build_system_prompt(workspace, "core_agent")
 
         assert "Core Agent" in prompt
         assert "search-web" in prompt  # skill injected
@@ -280,8 +274,7 @@ def test_prompt_builder_unknown_role():
         workspace = Path(td)
         _create_workspace(workspace)
 
-        builder = PromptBuilder(workspace)
-        prompt = builder.build("nonexistent_role")
+        prompt = _build_system_prompt(workspace, "nonexistent_role")
         assert prompt == ""
         print("  Prompt builder (unknown role) OK")
 
@@ -289,8 +282,7 @@ def test_prompt_builder_unknown_role():
 def test_prompt_builder_no_prompts():
     """Test prompt builder with workspace that has no matching role."""
     with tempfile.TemporaryDirectory() as td:
-        builder = PromptBuilder(Path(td))
-        prompt = builder.build("nonexistent_role_xyz")
+        prompt = _build_system_prompt(Path(td), "nonexistent_role_xyz")
         assert prompt == ""
         print("  Prompt builder (no prompts) OK")
 
@@ -313,12 +305,12 @@ if __name__ == "__main__":
     print("\n=== Skill Loader ===")
     test_skill_loader()
     test_skill_loader_empty()
-    test_skill_formatter()
+    test_skill_helpers()
 
     print("\n=== Knowledge Loader ===")
     test_knowledge_loader()
     test_knowledge_loader_empty()
-    test_knowledge_formatter()
+    test_knowledge_helpers()
 
     print("\n=== Prompt Builder ===")
     test_prompt_builder()

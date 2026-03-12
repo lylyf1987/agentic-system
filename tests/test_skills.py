@@ -16,15 +16,15 @@ from pathlib import Path
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agentic_system.context.skill_loader import load_skills, format_skills_for_prompt
-from agentic_system.context.knowledge_loader import load_knowledge_catalog, format_knowledge_for_prompt
-from agentic_system.context.prompt_builder import PromptBuilder
+from agentic_system.core.agent import _load_skills as load_skills, _parse_frontmatter, _parse_csv
+from agentic_system.core.agent import _load_knowledge_catalog as load_knowledge_catalog
+from agentic_system.core.agent import _build_system_prompt
 from agentic_system.core.action import Action, parse_action
 from agentic_system.core.environment import Environment
 from agentic_system.core.agent import Agent
 from agentic_system.core.state import Turn
-from agentic_system.core.loop import run_loop
-from agentic_system.runtime.sandbox import sandbox_executor
+from agentic_system.runtime.loop import run_loop
+from agentic_system.core.sandbox import sandbox_executor
 from agentic_system.runtime.approval import ApprovalPolicy
 from agentic_system.runtime.host import RuntimeHost
 
@@ -119,8 +119,7 @@ def test_bootstrapped_prompt_builder():
     """Verify PromptBuilder works with the bootstrapped workspace."""
     with tempfile.TemporaryDirectory() as td:
         host = RuntimeHost(workspace=Path(td))
-        builder = PromptBuilder(Path(td))
-        prompt = builder.build("core_agent")
+        prompt = _build_system_prompt(Path(td), "core_agent")
 
         assert prompt, "Empty system prompt"
         assert len(prompt) > 500, f"System prompt too short ({len(prompt)} chars)"
@@ -141,8 +140,7 @@ def test_full_pipeline_with_skill_exec():
     """End-to-end: PromptBuilder builds prompt, Agent acts, Loop executes."""
     with tempfile.TemporaryDirectory() as td:
         host = RuntimeHost(workspace=Path(td))
-        builder = PromptBuilder(Path(td))
-        system_prompt = builder.build("core_agent")
+        system_prompt = _build_system_prompt(Path(td), "core_agent")
 
         call_count = [0]
 

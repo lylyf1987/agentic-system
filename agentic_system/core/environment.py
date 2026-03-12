@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from .action import Action
-from .state import State, Turn
+from .state import State, Turn, format_turn
 
 
 # --------------------------------------------------------------------------- #
@@ -120,6 +120,7 @@ class Environment:
 
         # Model reference for delegation and LLM-based compaction
         self._model_ref: Any = None
+        self._loop_fn: Optional[Callable[..., str]] = None
 
         # Hooks
         self._on_before_execute: Optional[OnBeforeExecute] = None
@@ -138,6 +139,10 @@ class Environment:
         self.observation.append(turn)
 
     # ----- State building + compaction ------------------------------------- #
+
+    def set_loop_fn(self, loop_fn: Callable) -> None:
+        """Store the agent loop function for sub-agent delegation."""
+        self._loop_fn = loop_fn
 
     def build_state(self) -> State:
         """Build the State that the agent sees.
@@ -183,9 +188,7 @@ class Environment:
             )
 
         # Build the compactor prompt
-        history_text = "\n".join(
-            f"[{t.timestamp}] {t.role}> {t.content}" for t in old_turns
-        )
+        history_text = "\n".join(format_turn(t) for t in old_turns)
         prompt = (
             f"{COMPACTOR_PROMPT}\n\n"
             f"<workflow_summary>\n"
@@ -255,9 +258,11 @@ class Environment:
         child_workspace.mkdir(parents=True, exist_ok=True)
 
         # Import here to avoid circular imports
-        from .loop import run_loop
         from .agent import Agent
         from .action import ALLOWED_SUB_ACTIONS
+
+        if self._loop_fn is None:
+            return "Delegation failed: no loop_fn set on Environment. Call set_loop_fn() first."
 
         if self._model_ref is None:
             return "Delegation failed: no model reference available. Call set_model_ref() first."
@@ -294,7 +299,8 @@ class Environment:
             allowed_actions=ALLOWED_SUB_ACTIONS,
         )
 
-        return run_loop(sub_agent, sub_env)
+        sub_agent.act = getattr(sub_agent, "act")  # appease typechecker
+        return self._loop_fn(sub_agent, sub_env)
 
     def set_model_ref(self, model: Any) -> None:
         """Store a reference to the model provider for delegation and compaction."""
@@ -302,13 +308,15 @@ class Environment:
 
     # ----- Persistence ----------------------------------------------------- #
 
-    def save_session(self, session_path: Path) -> None:
+    def save_session(self, session_path: Path, *, extra_fields: dict | None = None) -> None:
         """Persist session state to disk."""
         state = {
             "full_history": [_turn_to_dict(t) for t in self.full_history],
             "observation": [_turn_to_dict(t) for t in self.observation],
             "workflow_summary": self.workflow_summary,
         }
+        if extra_fields:
+            state.update(extra_fields)
         session_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = session_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")

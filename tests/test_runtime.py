@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agentic_system.core.action import Action
 from agentic_system.core.environment import Environment
-from agentic_system.runtime.sandbox import sandbox_executor
+from agentic_system.core.sandbox import sandbox_executor
 from agentic_system.runtime.approval import ApprovalPolicy
 
 

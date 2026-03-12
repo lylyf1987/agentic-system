@@ -17,7 +17,7 @@ from agentic_system.core.action import (
 )
 from agentic_system.core.agent import Agent
 from agentic_system.core.environment import Environment
-from agentic_system.core.loop import run_loop
+from agentic_system.runtime.loop import run_loop
 
 
 def test_turn_creation():

@@ -10,10 +10,10 @@ import json
 import sys
 from typing import TextIO, Callable
 
-from .action import Action, ActionParseError
-from .agent import Agent
-from .environment import Environment, CompactionError
-from .state import Turn
+from ..core.action import Action, ActionParseError
+from ..core.agent import Agent
+from ..core.environment import Environment, CompactionError
+from ..core.state import Turn
 
 
 DEFAULT_MAX_TURNS = 60

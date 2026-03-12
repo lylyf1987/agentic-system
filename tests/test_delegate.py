@@ -14,9 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agentic_system.core.action import Action, ALLOWED_CORE_ACTIONS, ALLOWED_SUB_ACTIONS
 from agentic_system.core.agent import Agent
 from agentic_system.core.environment import Environment
-from agentic_system.core.loop import run_loop
+from agentic_system.runtime.loop import run_loop
 from agentic_system.core.state import Turn
-from agentic_system.runtime.sandbox import sandbox_executor
+from agentic_system.core.sandbox import sandbox_executor
 from agentic_system.runtime.approval import ApprovalPolicy
 
 
@@ -122,6 +122,7 @@ def test_delegate_no_model_ref():
     """Delegation should fail gracefully if no model reference is set."""
     with tempfile.TemporaryDirectory() as td:
         env = Environment(workspace=Path(td))
+        env.set_loop_fn(run_loop)
         # Don't set model ref
         action = Action(
             response="Delegating...",
@@ -142,6 +143,7 @@ def test_delegate_basic():
         env = Environment(workspace=Path(td), mode="auto")
         model = SubAgentModel()
         env.set_model_ref(model)
+        env.set_loop_fn(run_loop)
 
         action = Action(
             response="Delegating...",
@@ -174,6 +176,7 @@ def test_delegate_child_workspace_isolation():
         policy = ApprovalPolicy(mode="auto")
         env.on_before_execute(policy)
         env.set_model_ref(SubAgentModel())
+        env.set_loop_fn(run_loop)
 
         action = Action(
             response="Delegating...",
@@ -206,6 +209,7 @@ def test_full_delegation_loop():
 
         env = Environment(workspace=workspace, mode="auto")
         env.set_model_ref(model)
+        env.set_loop_fn(run_loop)
         env.record(Turn(role="user", content="Who created Python?"))
 
         agent = Agent(
@@ -264,6 +268,7 @@ def test_delegate_with_exec_in_sub_agent():
         policy = ApprovalPolicy(mode="auto")
         env.on_before_execute(policy)
         env.set_model_ref(model)
+        env.set_loop_fn(run_loop)
 
         action = Action(
             response="Delegating with exec...",

@@ -29,7 +29,10 @@ The illustration above captures the design used throughout the repo:
 python -m pip install -e .
 ```
 
-This installs the `agentic-system` CLI. You can also run:
+This installs the `agentic-system` CLI and its required runtime dependencies, including `prompt_toolkit`.
+Running the package directly from source without installing dependencies is not a supported setup for the interactive host.
+
+You can also run:
 
 ```bash
 python -m agentic_system

@@ -11,6 +11,8 @@ from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from ._http import post_json as _post_json
+
 
 class OllamaProvider:
     """Ollama adapter using ``/api/generate`` with optional streaming.
@@ -93,30 +95,3 @@ class OllamaProvider:
         except URLError as exc:
             raise RuntimeError(f"Ollama network error: {exc}") from exc
 
-
-# --------------------------------------------------------------------------- #
-# HTTP helper
-# --------------------------------------------------------------------------- #
-
-
-def _post_json(
-    url: str,
-    headers: dict[str, str],
-    payload: dict[str, Any],
-    timeout: int = 300,
-) -> dict[str, Any]:
-    """POST JSON and return parsed response."""
-    req = Request(
-        url=url,
-        method="POST",
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-    )
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code}: {body}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Network error: {exc}") from exc

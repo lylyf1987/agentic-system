@@ -4,7 +4,7 @@ from .state import State, Turn
 from .action import Action, parse_action, ActionParseError
 from .agent import Agent
 from .environment import Environment
-from .loop import run_loop
+from .sandbox import sandbox_executor
 
 __all__ = [
     "State",
@@ -14,5 +14,5 @@ __all__ = [
     "ActionParseError",
     "Agent",
     "Environment",
-    "run_loop",
+    "sandbox_executor",
 ]
