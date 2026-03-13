@@ -18,6 +18,7 @@ from agentic_system.core.action import (
 from agentic_system.core.agent import Agent
 from agentic_system.core.environment import Environment
 from agentic_system.runtime.loop import run_loop
+from agentic_system.runtime.approval import ApprovalPolicy
 
 
 def test_turn_creation():
@@ -338,6 +339,81 @@ def test_run_loop_max_retries():
         print("  run_loop (max retries) OK")
 
 
+def test_run_loop_exec_denied_returns_control():
+    """Test that approval denial records evidence and returns to requester."""
+    call_count = [0]
+
+    class MockModel:
+        def generate(self, prompt, *, stream=False, chunk_callback=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return (
+                    '<output>'
+                    '{"response": "Checking status.", '
+                    '"action": "exec", '
+                    '"action_input": {"job_name": "check-status", "code_type": "bash", "script": "echo x"}}'
+                    '</output>'
+                )
+            return (
+                '<output>'
+                '{"response": "This should not run.", "action": "chat", "action_input": {}}'
+                '</output>'
+            )
+
+    with tempfile.TemporaryDirectory() as td:
+        env = Environment(workspace=Path(td), mode="controlled")
+        env.on_before_execute(ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "n"))
+        env.record(Turn(role="user", content="check status"))
+        agent = Agent(MockModel(), system_prompt="test")
+        result = run_loop(agent, env, output=sys.stderr)
+
+        assert "denied by requester" in result.lower()
+        assert call_count[0] == 1
+        runtime_turns = [t for t in env.full_history if t.role == "runtime"]
+        assert len(runtime_turns) == 1
+        assert "denied by requester" in runtime_turns[0].content.lower()
+        print("  run_loop (exec denied returns control) OK")
+
+
+def test_run_loop_exec_cancelled_returns_control():
+    """Test that approval cancel records evidence and returns to requester."""
+    call_count = [0]
+
+    class MockModel:
+        def generate(self, prompt, *, stream=False, chunk_callback=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return (
+                    '<output>'
+                    '{"response": "Checking status.", '
+                    '"action": "exec", '
+                    '"action_input": {"job_name": "check-status", "code_type": "bash", "script": "echo x"}}'
+                    '</output>'
+                )
+            return (
+                '<output>'
+                '{"response": "This should not run.", "action": "chat", "action_input": {}}'
+                '</output>'
+            )
+
+    with tempfile.TemporaryDirectory() as td:
+        env = Environment(workspace=Path(td), mode="controlled")
+        env.on_before_execute(ApprovalPolicy(
+            mode="controlled",
+            prompt=lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt()),
+        ))
+        env.record(Turn(role="user", content="check status"))
+        agent = Agent(MockModel(), system_prompt="test")
+        result = run_loop(agent, env, output=sys.stderr)
+
+        assert "cancelled during approval prompt" in result.lower()
+        assert call_count[0] == 1
+        runtime_turns = [t for t in env.full_history if t.role == "runtime"]
+        assert len(runtime_turns) == 1
+        assert "cancelled during approval prompt" in runtime_turns[0].content.lower()
+        print("  run_loop (exec cancelled returns control) OK")
+
+
 if __name__ == "__main__":
     print("=== State & Turn ===")
     test_turn_creation()
@@ -373,5 +449,7 @@ if __name__ == "__main__":
     test_run_loop_think_then_chat()
     test_run_loop_parse_retry()
     test_run_loop_max_retries()
+    test_run_loop_exec_denied_returns_control()
+    test_run_loop_exec_cancelled_returns_control()
 
     print("\n✅ All Phase 1 tests passed!")

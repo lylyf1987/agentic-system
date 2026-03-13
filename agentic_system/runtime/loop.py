@@ -12,7 +12,7 @@ from typing import TextIO, Callable
 
 from ..core.action import Action, ActionParseError
 from ..core.agent import Agent
-from ..core.environment import Environment, CompactionError
+from ..core.environment import Environment, CompactionError, ExecutionInterrupted
 from ..core.state import Turn
 
 
@@ -118,7 +118,12 @@ def run_loop(
 
         elif action.type == "exec":
             _print(output, f"runtime> Executing: {action.payload.get('job_name', 'unnamed')}...\n")
-            observation = env.execute(action)
+            try:
+                observation = env.execute(action)
+            except ExecutionInterrupted as exc:
+                env.record(exc.observation)
+                _print(output, f"runtime> {exc.observation.content}\n")
+                return exc.observation.content
             env.record(observation)
 
         elif action.type == "delegate":

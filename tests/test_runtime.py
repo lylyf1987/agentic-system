@@ -1,5 +1,6 @@
 """Phase 2 verification tests for runtime sandbox and approval policies."""
 
+import builtins
 import sys
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agentic_system.core.action import Action
 from agentic_system.core.environment import Environment
 from agentic_system.core.sandbox import sandbox_executor
+from agentic_system.core.state import Turn
 from agentic_system.runtime.approval import ApprovalPolicy
 
 
@@ -120,9 +122,8 @@ def test_approval_policy_auto_mode():
     print("  Approval policy auto mode OK")
 
 
-@patch("builtins.input", side_effect=["y"])
-def test_approval_policy_controlled_allow_once(mock_input):
-    policy = ApprovalPolicy(mode="controlled")
+def test_approval_policy_controlled_allow_once():
+    policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "y")
     env = Environment(workspace=Path("."))
 
     action = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo x"})
@@ -130,9 +131,8 @@ def test_approval_policy_controlled_allow_once(mock_input):
     print("  Approval allow once OK")
 
 
-@patch("builtins.input", side_effect=["s"])
-def test_approval_policy_controlled_allow_session(mock_input):
-    policy = ApprovalPolicy(mode="controlled")
+def test_approval_policy_controlled_allow_session():
+    policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "s")
     env = Environment(workspace=Path("."))
 
     action = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo x"})
@@ -140,16 +140,14 @@ def test_approval_policy_controlled_allow_session(mock_input):
     assert policy(env, action) is True
 
     # Second time shouldn't prompt
-    with patch("builtins.input") as mock_input2:
-        mock_input2.side_effect = Exception("Should not prompt")
+    with patch("builtins.input", side_effect=Exception("Should not prompt")):
         assert policy(env, action) is True
 
     print("  Approval allow session OK")
 
 
-@patch("builtins.input", side_effect=["p"])
-def test_approval_policy_pattern_mode(mock_input):
-    policy = ApprovalPolicy(mode="controlled")
+def test_approval_policy_pattern_mode():
+    policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "p")
     env = Environment(workspace=Path("."))
 
     action1 = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo 'hello world'"})
@@ -158,21 +156,48 @@ def test_approval_policy_pattern_mode(mock_input):
 
     # Similar script with different quoted content should also be approved
     action2 = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo 'goodbye world'"})
-    with patch("builtins.input") as mock_input2:
-        mock_input2.side_effect = Exception("Should not prompt")
+    with patch("builtins.input", side_effect=Exception("Should not prompt")):
         assert policy(env, action2) is True
 
     print("  Approval pattern mode OK")
 
 
-@patch("builtins.input", side_effect=["n"])
-def test_approval_policy_controlled_deny(mock_input):
-    policy = ApprovalPolicy(mode="controlled")
+def test_approval_policy_controlled_deny():
+    policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "n")
     env = Environment(workspace=Path("."))
 
     action = Action(response="", type="exec", payload={"code_type": "bash", "script": "rm -rf /"})
-    assert policy(env, action) is False
+    result = policy(env, action)
+    assert isinstance(result, Turn)
+    assert "denied by requester" in result.content.lower()
     print("  Approval deny OK")
+
+
+def test_approval_policy_uses_injected_prompt_instead_of_raw_input():
+    policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "y")
+    env = Environment(workspace=Path("."))
+    action = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo x"})
+
+    original_input = builtins.input
+    try:
+        builtins.input = lambda _prompt="": (_ for _ in ()).throw(Exception("raw input should not be used"))
+        assert policy(env, action) is True
+    finally:
+        builtins.input = original_input
+    print("  Approval uses injected prompt OK")
+
+
+def test_approval_policy_keyboard_interrupt_cancels():
+    policy = ApprovalPolicy(
+        mode="controlled",
+        prompt=lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    env = Environment(workspace=Path("."))
+    action = Action(response="", type="exec", payload={"code_type": "bash", "script": "echo x"})
+    result = policy(env, action)
+    assert isinstance(result, Turn)
+    assert "cancelled during approval prompt" in result.content.lower()
+    print("  Approval keyboard interrupt cancels OK")
 
 
 def test_approval_policy_non_exec_passthrough():
@@ -218,6 +243,8 @@ if __name__ == "__main__":
     test_approval_policy_controlled_allow_session()
     test_approval_policy_pattern_mode()
     test_approval_policy_controlled_deny()
+    test_approval_policy_uses_injected_prompt_instead_of_raw_input()
+    test_approval_policy_keyboard_interrupt_cancels()
     test_approval_policy_non_exec_passthrough()
 
     print("\n=== Environment Integration ===")

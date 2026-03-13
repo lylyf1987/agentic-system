@@ -188,7 +188,10 @@ class RuntimeHost:
         self._env.set_loop_fn(run_loop)
 
         # Register approval policy as execution gate
-        self._approval = ApprovalPolicy(mode=mode)
+        self._approval = ApprovalPolicy(
+            mode=mode,
+            prompt=self._prompt_approval_choice,
+        )
         self._env.on_before_execute(self._approval)
 
     # ----- Input ------------------------------------------------------------- #
@@ -203,6 +206,16 @@ class RuntimeHost:
             event.app.exit(result=event.app.current_buffer.text)
 
         return PromptSession(key_bindings=bindings)
+
+    def _prompt_approval_choice(self, prompt_text: str) -> str:
+        """Read approval input using the same Ctrl+D/Ctrl+C semantics as user input."""
+        return str(
+            self._prompt_session.prompt(
+                prompt_text,
+                multiline=True,
+                prompt_continuation=lambda _w, _n, _s: "... ",
+            )
+        )
 
     # ----- Bootstrap -------------------------------------------------------- #
 

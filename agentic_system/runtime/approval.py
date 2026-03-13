@@ -2,9 +2,14 @@
 
 import hashlib
 import re
-from typing import Any
+from typing import Callable, Optional
+
 from agentic_system.core.action import Action
-from agentic_system.core.environment import Environment
+from agentic_system.core.environment import ApprovalResult, Environment
+from agentic_system.core.state import Turn
+
+
+PromptFn = Callable[[str], str]
 
 
 class ApprovalPolicy:
@@ -17,8 +22,14 @@ class ApprovalPolicy:
         k: allow same script_path for this session (ignore args)
     """
 
-    def __init__(self, mode: str = "controlled"):
+    def __init__(
+        self,
+        mode: str = "controlled",
+        *,
+        prompt: Optional[PromptFn] = None,
+    ) -> None:
         self.mode = mode
+        self._prompt = prompt or input
         self.approved_exact: set[str] = set()
         self.approved_patterns: set[str] = set()
         self.approved_paths: set[str] = set()
@@ -46,7 +57,7 @@ class ApprovalPolicy:
         normalized = re.sub(r"\b\d+\b", "N", normalized)
         return f"{payload.get('code_type', 'bash')}:{normalized.strip()}"
 
-    def __call__(self, env: Environment, action: Action) -> bool:
+    def __call__(self, env: Environment, action: Action) -> ApprovalResult:
         """Environment hook: OnBeforeExecute."""
         if action.type != "exec":
             return True
@@ -82,9 +93,17 @@ class ApprovalPolicy:
         print("  k: allow same script_path for this session (ignore args)")
 
         try:
-            choice = input("> ").strip().lower()
+            choice = self._prompt("> ").strip().lower()
         except EOFError:
-            return False
+            return Turn(
+                role="runtime",
+                content="Execution cancelled during approval prompt (input closed).",
+            )
+        except KeyboardInterrupt:
+            return Turn(
+                role="runtime",
+                content="Execution cancelled during approval prompt by requester.",
+            )
 
         if choice in {"y", "yes", "once"}:
             return True
@@ -100,6 +119,12 @@ class ApprovalPolicy:
                 return True
             else:
                 print("runtime> 'k' requires a script_path. Denied.")
-                return False
+                return Turn(
+                    role="runtime",
+                    content="Execution denied by requester during approval prompt.",
+                )
 
-        return False
+        return Turn(
+            role="runtime",
+            content="Execution denied by requester during approval prompt.",
+        )

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 from .action import Action
@@ -28,11 +28,20 @@ class CompactionError(RuntimeError):
     """
 
 
+class ExecutionInterrupted(RuntimeError):
+    """Raised when execution should stop and control should return to the requester."""
+
+    def __init__(self, observation: Turn) -> None:
+        super().__init__(observation.content)
+        self.observation = observation
+
+
 # --------------------------------------------------------------------------- #
 # Hook signatures
 # --------------------------------------------------------------------------- #
 
-OnBeforeExecute = Callable[["Environment", Action], bool]
+ApprovalResult = Union[bool, Turn]
+OnBeforeExecute = Callable[["Environment", Action], ApprovalResult]
 
 # Sandbox executor signature: (payload, workspace) -> Turn
 SandboxExecutor = Callable[[dict, Path], Turn]
@@ -225,11 +234,15 @@ class Environment:
             Observation Turn with execution results.
         """
         if self._on_before_execute:
-            allowed = self._on_before_execute(self, action)
-            if not allowed:
-                return Turn(
-                    role="runtime",
-                    content="Execution denied by approval policy.",
+            decision = self._on_before_execute(self, action)
+            if isinstance(decision, Turn):
+                raise ExecutionInterrupted(decision)
+            if not decision:
+                raise ExecutionInterrupted(
+                    Turn(
+                        role="runtime",
+                        content="Execution denied by approval policy.",
+                    )
                 )
 
         if self._executor is None:
