@@ -11,11 +11,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import ssl
+from http.client import RemoteDisconnected
 from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from ._http import post_json as _post_json
+from ._http import post_json as _post_json, to_runtime_error as _to_runtime_error
 
 
 class OpenAICompatProvider:
@@ -118,7 +121,13 @@ class OpenAICompatProvider:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         if not stream:
-            data = _post_json(self.endpoint, headers, payload, timeout=self.timeout)
+            data = _post_json(
+                self.endpoint,
+                headers,
+                payload,
+                timeout=self.timeout,
+                error_prefix=self.provider,
+            )
             return _extract_response_text(data)
 
         # SSE streaming
@@ -149,11 +158,16 @@ class OpenAICompatProvider:
                         if chunk_callback is not None:
                             chunk_callback(piece)
             return "".join(parts)
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{self.provider} HTTP {exc.code}: {body}") from exc
-        except URLError as exc:
-            raise RuntimeError(f"{self.provider} network error: {exc}") from exc
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+            RemoteDisconnected,
+            ssl.SSLError,
+        ) as exc:
+            raise _to_runtime_error(self.provider, exc) from exc
 
     def _validate_configuration(self) -> None:
         """Fail fast for providers that require an API key."""
@@ -219,4 +233,3 @@ def _extract_stream_piece(data: dict[str, Any]) -> str:
         if text:
             return text
     return str(first.get("text", ""))
-

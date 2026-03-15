@@ -3,6 +3,7 @@
 import json
 import sys
 import tempfile
+from http.client import RemoteDisconnected
 from pathlib import Path
 from unittest.mock import patch
 
@@ -102,6 +103,67 @@ def test_provider_satisfies_protocol():
         assert "stream" in params, f"{cls.__name__}.generate() missing stream param"
         assert "chunk_callback" in params, f"{cls.__name__}.generate() missing chunk_callback param"
     print("  Protocol compliance OK")
+
+
+class _MockHTTPResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> "_MockHTTPResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_openai_provider_stream_timeout_wrapped_as_runtime_error():
+    provider = OpenAICompatProvider()
+
+    with patch(
+        "agentic_system.providers.openai_compat.urlopen",
+        side_effect=TimeoutError("read timed out"),
+    ):
+        try:
+            provider.generate("hello", stream=True)
+            assert False, "Expected streaming timeout to raise RuntimeError"
+        except RuntimeError as exc:
+            assert "openai_compatible network error" in str(exc)
+            assert "read timed out" in str(exc)
+    print("  OpenAICompatProvider stream timeout wrapping OK")
+
+
+def test_ollama_provider_stream_disconnect_wrapped_as_runtime_error():
+    provider = OllamaProvider()
+
+    with patch(
+        "agentic_system.providers.ollama.urlopen",
+        side_effect=RemoteDisconnected("closed"),
+    ):
+        try:
+            provider.generate("hello", stream=True)
+            assert False, "Expected stream disconnect to raise RuntimeError"
+        except RuntimeError as exc:
+            assert "Ollama network error" in str(exc)
+            assert "closed" in str(exc)
+    print("  OllamaProvider stream disconnect wrapping OK")
+
+
+def test_openai_provider_non_stream_invalid_json_wrapped_as_runtime_error():
+    provider = OpenAICompatProvider()
+
+    with patch(
+        "agentic_system.providers._http.urlopen",
+        return_value=_MockHTTPResponse(b"not-json"),
+    ):
+        try:
+            provider.generate("hello", stream=False)
+            assert False, "Expected invalid JSON response to raise RuntimeError"
+        except RuntimeError as exc:
+            assert "openai_compatible invalid JSON response" in str(exc)
+    print("  OpenAICompatProvider invalid JSON wrapping OK")
 
 
 # =========================================================================== #

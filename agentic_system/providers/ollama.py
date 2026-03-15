@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import ssl
+from http.client import RemoteDisconnected
 from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from ._http import post_json as _post_json
+from ._http import post_json as _post_json, to_runtime_error as _to_runtime_error
 
 
 class OllamaProvider:
@@ -59,7 +62,13 @@ class OllamaProvider:
         headers = {"Content-Type": "application/json"}
 
         if not stream:
-            data = _post_json(self.endpoint, headers, payload, timeout=self.timeout)
+            data = _post_json(
+                self.endpoint,
+                headers,
+                payload,
+                timeout=self.timeout,
+                error_prefix="Ollama",
+            )
             text = str(data.get("response", "") or "")
             if not text and isinstance(data.get("message"), dict):
                 text = str(data["message"].get("content", "") or "")
@@ -89,9 +98,13 @@ class OllamaProvider:
                         if chunk_callback is not None:
                             chunk_callback(piece)
             return "".join(parts)
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Ollama HTTP {exc.code}: {body}") from exc
-        except URLError as exc:
-            raise RuntimeError(f"Ollama network error: {exc}") from exc
-
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+            RemoteDisconnected,
+            ssl.SSLError,
+        ) as exc:
+            raise _to_runtime_error("Ollama", exc) from exc

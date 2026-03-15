@@ -3,6 +3,8 @@
 import re
 import sys
 import tempfile
+from http.client import RemoteDisconnected
+from io import StringIO
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -259,6 +261,42 @@ def test_environment_persistence():
         assert env2.workflow_summary == "test summary"
         assert env2.full_history[0].content == "hello"
         print("  Persistence OK")
+
+
+def test_run_loop_compaction_failure_is_ui_only():
+    """Compaction failures should pause the session without recording a runtime turn."""
+
+    class FailingCompactionModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, prompt, *, stream=False, chunk_callback=None):
+            self.calls += 1
+            raise RemoteDisconnected("compactor closed connection")
+
+    class UnusedAgentModel:
+        def generate(self, prompt, *, stream=False, chunk_callback=None):
+            assert False, "Agent model should not be called when compaction fails"
+
+    with tempfile.TemporaryDirectory() as td:
+        env = Environment(workspace=Path(td), token_limit=10, keep_last_k=1)
+        env.record(Turn(role="user", content="x" * 120))
+        env.record(Turn(role="runtime", content="y" * 120))
+
+        compactor = FailingCompactionModel()
+        env.set_model_ref(compactor)
+
+        agent = Agent(UnusedAgentModel(), system_prompt="test")
+        captured = StringIO()
+        result = run_loop(agent, env, output=captured)
+
+        assert "compaction failed" in result.lower()
+        assert compactor.calls == 3
+        assert "runtime> Session paused:" in captured.getvalue()
+        assert len(env.full_history) == 2
+        assert len(env.observation) == 2
+        assert all("compaction failed" not in t.content.lower() for t in env.full_history)
+        print("  run_loop (compaction failure UI-only) OK")
 
 
 
