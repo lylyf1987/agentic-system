@@ -26,6 +26,7 @@ Knowledge retrieval/search should be handled by a separate skill.
 
 - Docs are persisted under runtime workspace `knowledge/docs/`.
 - Index is persisted under `knowledge/index/catalog.json`.
+- Each catalog entry stores only `title`, `summary`, `tags`, and `path`.
 - Persistence is handled directly by the skill script (runtime-local, no dev-package dependency).
 
 # Actions
@@ -33,9 +34,10 @@ Knowledge retrieval/search should be handled by a separate skill.
 1. `create`
 - Create a new knowledge doc.
 - Requires at least `title` and one meaningful content field.
+- Include `--summary` when possible so the library stays easy to retrieve from.
 
 2. `update`
-- Update an existing doc by `doc_id`.
+- Update an existing doc by `doc_path` (preferred) or `doc_id` (legacy fallback).
 - If `--body` is provided, it replaces doc body.
 - Otherwise, script appends a structured update block.
 
@@ -48,6 +50,7 @@ Knowledge retrieval/search should be handled by a separate skill.
   "script_args": [
     "--action", "create",
     "--title", "LM Studio connection troubleshooting",
+    "--summary", "How to diagnose LM Studio connection failures by checking server state, base URL, model mapping, and timeout behavior.",
     "--problem", "Connection refused from local endpoint",
     "--what-was-done", "Verified base URL and server state",
     "--reusable-pattern", "Check server up + endpoint + model mapping",
@@ -65,7 +68,8 @@ Update example:
   "script_path": "skills/all-agents/documentation-distillation/scripts/documentation_distill.py",
   "script_args": [
     "--action", "update",
-    "--doc-id", "doc_abc123",
+    "--doc-path", "knowledge/docs/doc_abc123.md",
+    "--summary", "Updated troubleshooting guide for LM Studio connection failures with retry diagnostics.",
     "--what-was-done", "Added additional retry diagnostics",
     "--caveats", "Retry logic still depends on provider timeout"
   ]

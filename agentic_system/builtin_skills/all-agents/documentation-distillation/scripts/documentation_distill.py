@@ -3,16 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 _EXECUTED_SKILL = "documentation-distillation"
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 def _parse_tags(raw: str) -> list[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
@@ -30,6 +25,38 @@ def _strip_h1(text: str) -> str:
         if lines and not lines[0].strip():
             lines = lines[1:]
     return "\n".join(lines).strip()
+
+
+def _normalize_text(text: str) -> str:
+    parts: list[str] = []
+    for raw_line in str(text).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            line = line.lstrip("#").strip()
+        if line:
+            parts.append(line)
+    return " ".join(parts)
+
+
+def _truncate_words(text: str, max_words: int = 50) -> str:
+    words = str(text).split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words])
+
+
+def _build_summary(title: str, body: str, raw_summary: str) -> str:
+    summary = _truncate_words(_normalize_text(raw_summary))
+    if summary:
+        return summary
+
+    fallback = _truncate_words(_normalize_text(body))
+    if fallback:
+        return fallback
+
+    return _truncate_words(_normalize_text(title))
 
 
 def _build_body(args: argparse.Namespace) -> str:
@@ -90,17 +117,31 @@ def _save_catalog(catalog_path: Path, rows: list[dict[str, Any]]) -> None:
     catalog_path.write_text(json.dumps(rows, indent=2, ensure_ascii=True), encoding="utf-8")
 
 
-def _get_catalog_entry(catalog_rows: list[dict[str, Any]], doc_id: str) -> dict[str, Any]:
+def _catalog_relpath(workspace: Path, doc_path: Path) -> str:
+    return str(doc_path.relative_to(workspace))
+
+
+def _get_catalog_entry(catalog_rows: list[dict[str, Any]], workspace: Path, doc_path: Path) -> dict[str, Any]:
+    relpath = _catalog_relpath(workspace, doc_path)
+    stem = doc_path.stem
     for row in catalog_rows:
-        if str(row.get("doc_id", "")).strip() == doc_id:
+        row_path = str(row.get("path", "")).strip()
+        if row_path and row_path == relpath:
+            return row
+        if not row_path and str(row.get("doc_id", "")).strip() == stem:
             return row
     return {}
 
 
-def _upsert_catalog_entry(catalog_rows: list[dict[str, Any]], entry: dict[str, Any]) -> None:
-    doc_id = str(entry.get("doc_id", "")).strip()
+def _upsert_catalog_entry(catalog_rows: list[dict[str, Any]], workspace: Path, doc_path: Path, entry: dict[str, Any]) -> None:
+    relpath = _catalog_relpath(workspace, doc_path)
+    stem = doc_path.stem
     for idx, row in enumerate(catalog_rows):
-        if str(row.get("doc_id", "")).strip() == doc_id:
+        row_path = str(row.get("path", "")).strip()
+        if row_path and row_path == relpath:
+            catalog_rows[idx] = entry
+            return
+        if not row_path and str(row.get("doc_id", "")).strip() == stem:
             catalog_rows[idx] = entry
             return
     catalog_rows.append(entry)
@@ -110,24 +151,42 @@ def _doc_path(docs_root: Path, doc_id: str) -> Path:
     return docs_root / f"{doc_id}.md"
 
 
-def _read_existing_doc(docs_root: Path, catalog_rows: list[dict[str, Any]], doc_id: str) -> dict[str, Any] | None:
-    path = _doc_path(docs_root, doc_id)
+def _resolve_doc_path(workspace: Path, docs_root: Path, doc_id: str, doc_path_text: str) -> Path:
+    raw_path = str(doc_path_text).strip()
+    if raw_path:
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        return candidate.resolve()
+    return _doc_path(docs_root, doc_id)
+
+
+def _read_existing_doc(workspace: Path, catalog_rows: list[dict[str, Any]], doc_path: Path) -> dict[str, Any] | None:
+    path = doc_path
     if not path.exists():
         return None
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    row = _get_catalog_entry(catalog_rows, doc_id)
+    row = _get_catalog_entry(catalog_rows, workspace, path)
+    doc_id = path.stem
     title = str(row.get("title", "")).strip()
     if not title:
         title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), doc_id)
+    summary = _build_summary(title, _strip_h1(text), str(row.get("summary", "")).strip())
+    raw_tags = row.get("tags", [])
+    if isinstance(raw_tags, list):
+        tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+    elif isinstance(raw_tags, str):
+        tags = _parse_tags(raw_tags)
+    else:
+        tags = []
     return {
-        "doc_id": doc_id,
         "title": title,
+        "summary": summary,
         "text": text,
-        "quality_score": float(row.get("quality_score", 0.0) or 0.0),
-        "confidence": float(row.get("confidence", 0.0) or 0.0),
+        "tags": tags,
         "path": str(path),
     }
 
@@ -152,15 +211,12 @@ def run_create(workspace: Path, args: argparse.Namespace) -> tuple[dict[str, Any
     doc_path.write_text(out, encoding="utf-8")
 
     entry = {
-        "doc_id": doc_id,
         "title": title,
-        "path": str(doc_path.relative_to(workspace)),
+        "summary": _build_summary(title, body, str(args.summary)),
         "tags": tags,
-        "quality_score": float(args.quality_score),
-        "confidence": float(args.confidence),
-        "updated_at": _now_iso(),
+        "path": _catalog_relpath(workspace, doc_path),
     }
-    _upsert_catalog_entry(catalog_rows, entry)
+    _upsert_catalog_entry(catalog_rows, workspace, doc_path, entry)
     _save_catalog(catalog_path, catalog_rows)
 
     return _ok(doc_path=str(doc_path.relative_to(workspace))), 0
@@ -168,16 +224,19 @@ def run_create(workspace: Path, args: argparse.Namespace) -> tuple[dict[str, Any
 
 def run_update(workspace: Path, args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     doc_id = str(args.doc_id).strip()
-    if not doc_id:
-        return _err(doc_path="documentation_error: missing --doc-id for update"), 1
 
     docs_root, _index_root, catalog_path = _knowledge_paths(workspace)
     catalog_rows = _load_catalog(catalog_path)
-    existing = _read_existing_doc(docs_root, catalog_rows, doc_id)
+    doc_path = _resolve_doc_path(workspace, docs_root, doc_id, str(args.doc_path))
+    if not str(args.doc_path).strip() and not doc_id:
+        return _err(doc_path="documentation_error: missing --doc-path or --doc-id for update"), 1
+
+    existing = _read_existing_doc(workspace, catalog_rows, doc_path)
     if existing is None:
-        return _err(doc_path=f"documentation_error: doc not found for doc_id={doc_id}"), 1
+        return _err(doc_path=f"documentation_error: doc not found for path={doc_path}"), 1
 
     current_title = str(existing.get("title", "")).strip() or "Untitled"
+    current_summary = str(existing.get("summary", "")).strip()
     current_text = str(existing.get("text", ""))
     current_body = _strip_h1(current_text)
 
@@ -208,28 +267,17 @@ def run_update(workspace: Path, args: argparse.Namespace) -> tuple[dict[str, Any
         else:
             return _err(doc_path="documentation_error: no update content provided"), 1
 
-    doc_path = _doc_path(docs_root, doc_id)
     doc_path.write_text(f"# {next_title}\n\n{next_body}\n", encoding="utf-8")
 
-    current_row = _get_catalog_entry(catalog_rows, doc_id)
-    next_tags = _parse_tags(args.tags)
-    if not next_tags:
-        existing_tags = current_row.get("tags", [])
-        if isinstance(existing_tags, list):
-            next_tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
-        elif isinstance(existing_tags, str):
-            next_tags = [item.strip() for item in existing_tags.split(",") if item.strip()]
+    next_tags = _parse_tags(args.tags) or list(existing.get("tags", []))
 
     entry = {
-        "doc_id": doc_id,
         "title": next_title,
-        "path": str(doc_path.relative_to(workspace)),
+        "summary": _build_summary(next_title, next_body, str(args.summary) or current_summary),
         "tags": next_tags,
-        "quality_score": float(args.quality_score),
-        "confidence": float(args.confidence),
-        "updated_at": _now_iso(),
+        "path": _catalog_relpath(workspace, doc_path),
     }
-    _upsert_catalog_entry(catalog_rows, entry)
+    _upsert_catalog_entry(catalog_rows, workspace, doc_path, entry)
     _save_catalog(catalog_path, catalog_rows)
 
     return _ok(doc_path=str(doc_path.relative_to(workspace))), 0
@@ -240,7 +288,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--action", required=True, choices=["create", "update"])
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--doc-id", default="")
+    parser.add_argument("--doc-path", default="")
     parser.add_argument("--title", default="")
+    parser.add_argument("--summary", default="")
     parser.add_argument("--body", default="")
     parser.add_argument("--problem", default="")
     parser.add_argument("--what-was-done", default="")

@@ -27,6 +27,12 @@ from agentic_system.providers.openai_compat import OpenAICompatProvider
 WORKSPACE = Path(__file__).resolve().parent.parent
 
 
+def _make_host(workspace: Path, **kwargs) -> RuntimeHost:
+    params = {"workspace": workspace, "session_id": "session-01"}
+    params.update(kwargs)
+    return RuntimeHost(**params)
+
+
 # =========================================================================== #
 # Provider factory tests
 # =========================================================================== #
@@ -70,7 +76,7 @@ def test_provider_factory_with_model():
 def test_host_init():
     """Verify RuntimeHost initializes with correct configuration."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(
+        host = _make_host(
             workspace=Path(td),
             provider="ollama",
             mode="auto",
@@ -78,16 +84,25 @@ def test_host_init():
         assert host.provider_name == "ollama"
         assert host.mode == "auto"
         assert host.workspace == Path(td).resolve()
-        assert host.session_id is None
-        assert host.session_path is None
+        assert host.session_id == "session-01"
+        assert host.session_root == (Path(td) / "sessions" / "session-01").resolve()
+        assert host.project_root == host.session_root / "project"
+        assert host.docs_root == host.session_root / "docs"
+        assert host.project_root.exists()
+        assert host.docs_root.exists()
+        assert host.state_root.exists()
+        assert host.session_path == host.state_root / "session.json"
         assert len(host._agent.system_prompt) > 0  # loaded from package prompts
+        assert str(host.project_root) in host._agent.system_prompt
+        assert str(host.docs_root) in host._agent.system_prompt
+        assert str(host.state_root) in host._agent.system_prompt
         print("  RuntimeHost init OK")
 
 
 def test_host_init_controlled():
     """Verify RuntimeHost in controlled mode."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(
+        host = _make_host(
             workspace=Path(td),
             provider="deepseek",
             mode="controlled",
@@ -101,16 +116,17 @@ def test_host_init_with_session_id_loads_existing_state():
     """Verify RuntimeHost resumes a named session when it already exists."""
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
-        session_path = workspace / ".sessions" / "review-01.json"
+        legacy_session_path = workspace / ".sessions" / "review-01.json"
+        session_path = workspace / "sessions" / "review-01" / ".state" / "session.json"
 
         env = Environment(workspace=workspace)
         env.record(Turn(role="user", content="Previous request"))
         env.record(Turn(role="core-agent", content="Previous response"))
         env.workflow_summary = "Prior summary"
-        env.save_session(session_path)
-        raw = json.loads(session_path.read_text(encoding="utf-8"))
+        env.save_session(legacy_session_path)
+        raw = json.loads(legacy_session_path.read_text(encoding="utf-8"))
         raw["last_prompt"] = "Prior prompt"
-        session_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        legacy_session_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
         host = RuntimeHost(
             workspace=workspace,
@@ -136,7 +152,7 @@ def test_host_init_with_session_id_loads_existing_state():
 def test_host_command_help():
     """Verify /help returns help text."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         result = host._handle_command("/help")
         assert "Commands:" in result
         assert "/exit" in result
@@ -146,11 +162,11 @@ def test_host_command_help():
 def test_host_command_status():
     """Verify /status returns status text."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         result = host._handle_command("/status")
         assert "provider=" in result
         assert "mode=" in result
-        assert "session_state=ephemeral" in result
+        assert "session_state=new" in result
         print("  /status command OK")
 
 
@@ -165,7 +181,7 @@ def test_host_command_full_history():
         ))
         with patch("agentic_system.runtime.host.open_file_in_viewer", return_value=True):
             result = host._handle_command("/full_history")
-        path = Path(td) / ".sessions" / "views" / "debug-01.full_history.html"
+        path = Path(td) / "sessions" / "debug-01" / ".state" / "views" / "debug-01.full_history.html"
         assert result == f"Opened session view: {path.resolve()}"
         text = path.read_text(encoding="utf-8")
         assert "Agentic System Timeline View" in text
@@ -182,7 +198,7 @@ def test_host_command_observation():
         host._env.record(Turn(role="user", content="Hello"))
         with patch("agentic_system.runtime.host.open_file_in_viewer", return_value=True):
             result = host._handle_command("/observation")
-        path = Path(td) / ".sessions" / "views" / "debug-01.observation.html"
+        path = Path(td) / "sessions" / "debug-01" / ".state" / "views" / "debug-01.observation.html"
         assert result == f"Opened session view: {path.resolve()}"
         text = path.read_text(encoding="utf-8")
         assert "Agentic System Timeline View" in text
@@ -199,7 +215,7 @@ def test_host_command_workflow_summary():
         host._env.workflow_summary = "## Current Status\nWorking"
         with patch("agentic_system.runtime.host.open_file_in_viewer", return_value=True):
             result = host._handle_command("/workflow_summary")
-        path = Path(td) / ".sessions" / "views" / "debug-01.workflow_summary.html"
+        path = Path(td) / "sessions" / "debug-01" / ".state" / "views" / "debug-01.workflow_summary.html"
         assert result == f"Opened session view: {path.resolve()}"
         text = path.read_text(encoding="utf-8")
         assert "workflow_summary" in text
@@ -214,7 +230,7 @@ def test_host_command_last_prompt():
         host._agent.last_prompt = "system\n\n<latest_context>\n[user] Hello\n</latest_context>"
         with patch("agentic_system.runtime.host.open_file_in_viewer", return_value=True):
             result = host._handle_command("/last_prompt")
-        path = Path(td) / ".sessions" / "views" / "debug-01.last_prompt.html"
+        path = Path(td) / "sessions" / "debug-01" / ".state" / "views" / "debug-01.last_prompt.html"
         assert result == f"Opened session view: {path.resolve()}"
         text = path.read_text(encoding="utf-8")
         assert "Agentic System Prompt View" in text
@@ -231,7 +247,7 @@ def test_host_command_last_prompt_empty():
         host = RuntimeHost(workspace=Path(td), session_id="debug-01")
         with patch("agentic_system.runtime.host.open_file_in_viewer", return_value=False):
             result = host._handle_command("/last_prompt")
-        path = Path(td) / ".sessions" / "views" / "debug-01.last_prompt.html"
+        path = Path(td) / "sessions" / "debug-01" / ".state" / "views" / "debug-01.last_prompt.html"
         assert result == f"Session view written: {path.resolve()}"
         text = path.read_text(encoding="utf-8")
         assert "last_prompt" in text
@@ -239,19 +255,20 @@ def test_host_command_last_prompt_empty():
         print("  /last_prompt empty OK")
 
 
-def test_host_command_views_require_session_id():
-    """Verify session inspection commands require a named session."""
+def test_host_requires_session_id():
+    """Verify RuntimeHost requires a named session."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
-        result = host._handle_command("/full_history")
-        assert "require --session-id" in result
-        print("  Session views require session id OK")
+        try:
+            RuntimeHost(workspace=Path(td))
+            assert False, "Expected missing session_id to raise"
+        except ValueError:
+            print("  Session id required OK")
 
 
 def test_host_command_exit():
     """Verify /exit returns None (exit signal)."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         result = host._handle_command("/exit")
         assert result is None
         print("  /exit command OK")
@@ -260,7 +277,7 @@ def test_host_command_exit():
 def test_host_command_unknown():
     """Verify unknown command returns error message."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         result = host._handle_command("/foobar")
         assert "Unknown" in result
         print("  Unknown command OK")
@@ -274,7 +291,7 @@ def test_host_command_unknown():
 def test_host_process_message():
     """Test that _process_message records turns and runs the agent loop."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
 
         # Mock the model to return a simple chat response
         mock_generate = MagicMock(return_value=(
@@ -331,7 +348,7 @@ def test_host_process_message_saves_named_session():
         with patch("sys.stdout", captured):
             host._process_message("Persist this")
 
-        session_path = workspace / ".sessions" / "active-1.json"
+        session_path = workspace / "sessions" / "active-1" / ".state" / "session.json"
         assert session_path.exists()
         reloaded = Environment(workspace=workspace)
         assert reloaded.load_session(session_path) is True
@@ -344,7 +361,7 @@ def test_host_process_message_saves_named_session():
 def test_host_process_exec():
     """Test that _process_message handles exec actions correctly."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td), mode="auto")
+        host = _make_host(Path(td), mode="auto")
 
         call_count = [0]
         def mock_generate(prompt, **kwargs):
@@ -382,7 +399,7 @@ def test_host_process_exec():
 def test_host_process_message_runtime_error():
     """Verify runtime-facing provider errors are surfaced without crashing."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         host._model.generate = MagicMock(
             side_effect=RuntimeError(
                 "Missing API key for provider 'zai'. Set ZAI_API_KEY or OPENAI_COMPAT_API_KEY."
@@ -404,7 +421,7 @@ def test_host_process_message_runtime_error():
 def test_host_process_message_discards_parse_failed_preview():
     """Verify parse-failed streamed text is not shown to the requester."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
 
         call_count = [0]
 
@@ -476,15 +493,14 @@ def test_cli_parser():
     print("  CLI parser OK")
 
 
-def test_cli_parser_defaults():
-    """Verify CLI parser defaults."""
+def test_cli_parser_requires_session_id():
+    """Verify CLI parser requires a session id."""
     parser = build_parser()
-    args = parser.parse_args(["--workspace", "."])
-    assert args.provider == "ollama"
-    assert args.mode == "controlled"
-    assert args.model is None
-    assert args.session_id is None
-    print("  CLI parser defaults OK")
+    try:
+        parser.parse_args(["--workspace", "."])
+        assert False, "Expected missing session_id to raise"
+    except SystemExit:
+        print("  CLI parser requires session id OK")
 
 
 def test_host_invalid_session_id():

@@ -30,7 +30,6 @@ Use this skill to load relevant knowledge documents from the runtime `knowledge/
   "code_type": "python",
   "script_path": "skills/all-agents/load-knowledge-docs/scripts/load_knowledge_docs.py",
   "script_args": [
-    "--doc-id", "doc_abc123",
     "--doc-path", "knowledge/docs/doc_xyz789.md",
     "--max-docs", "4",
     "--max-chars-per-doc", "2200"
@@ -52,7 +51,7 @@ Path-only example:
 }
 ```
 
-Use `AVAILABLE KNOWLEDGE` metadata in system prompt to choose `doc-id` or `doc-path` first, then load selected docs with this skill.
+Use `AVAILABLE KNOWLEDGE` metadata in system prompt to choose `doc-path` first, then load selected docs with this skill. `--doc-id` is still supported as a legacy fallback when you only know the filename stem.
 
 # Output JSON Shape
 

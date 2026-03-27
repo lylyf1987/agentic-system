@@ -34,6 +34,12 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 BUILTIN_SKILLS = WORKSPACE / "agentic_system" / "builtin_skills"
 
 
+def _make_host(workspace: Path, **kwargs) -> RuntimeHost:
+    params = {"workspace": workspace, "session_id": "skills-01"}
+    params.update(kwargs)
+    return RuntimeHost(**params)
+
+
 # =========================================================================== #
 # Skills integration — loading from builtin_skills package directory
 # =========================================================================== #
@@ -102,12 +108,10 @@ def _create_workspace_knowledge(workspace: Path) -> None:
         encoding="utf-8",
     )
     catalog = [{
-        "doc_id": doc_id,
         "title": "Schema test",
+        "summary": "Knowledge fixture used to verify runtime knowledge catalog loading.",
         "path": f"knowledge/docs/{doc_id}.md",
         "tags": ["test", "schema"],
-        "quality_score": 0.9,
-        "confidence": 0.95,
     }]
     (index_root / "catalog.json").write_text(
         json.dumps(catalog, indent=2),
@@ -122,7 +126,7 @@ def test_workspace_knowledge_loading():
         _create_workspace_knowledge(workspace)
         catalog = load_knowledge_catalog(workspace / "knowledge")
         assert len(catalog) == 1
-        assert catalog[0]["doc_id"] == "doc_c83ff4bad5ca"
+        assert catalog[0]["path"] == "knowledge/docs/doc_c83ff4bad5ca.md"
         assert catalog[0]["title"] == "Schema test"
         print(f"  Workspace knowledge loading OK ({len(catalog)} docs)")
 
@@ -135,7 +139,7 @@ def test_workspace_knowledge_loading():
 def test_bootstrap_skills():
     """Verify that RuntimeHost bootstraps all 9 skills into a fresh workspace."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         ws_skills = Path(td) / "skills" / "all-agents"
         skill_dirs = sorted(p.name for p in ws_skills.iterdir() if p.is_dir())
         assert len(skill_dirs) == 9, f"Expected 9, got {len(skill_dirs)}: {skill_dirs}"
@@ -148,7 +152,7 @@ def test_bootstrap_skills():
 def test_bootstrapped_prompt_builder():
     """Verify PromptBuilder works with the bootstrapped workspace."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         prompt = _build_system_prompt(Path(td), "core_agent")
 
         assert prompt, "Empty system prompt"
@@ -169,7 +173,7 @@ def test_bootstrapped_prompt_builder():
 def test_full_pipeline_with_skill_exec():
     """End-to-end: PromptBuilder builds prompt, Agent acts, Loop executes."""
     with tempfile.TemporaryDirectory() as td:
-        host = RuntimeHost(workspace=Path(td))
+        host = _make_host(Path(td))
         system_prompt = _build_system_prompt(Path(td), "core_agent")
 
         call_count = [0]

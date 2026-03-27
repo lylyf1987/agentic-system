@@ -247,19 +247,16 @@ def _create_knowledge_catalog(root: Path) -> None:
     index_dir.mkdir(parents=True)
     catalog = [
         {
-            "doc_id": "rl-overview",
             "title": "RL for LLM Post-Training",
+            "summary": "Overview of reinforcement learning methods commonly used in LLM post-training.",
             "path": "knowledge/docs/rl-overview.md",
             "tags": ["rl", "llm"],
-            "quality_score": 0.9,
-            "confidence": 0.85,
         },
         {
-            "doc_id": "agent-design",
             "title": "Agent System Design",
+            "summary": "Notes on runtime architecture, orchestration, and component boundaries.",
             "path": "knowledge/docs/agent-design.md",
             "tags": "design, architecture",  # String tags
-            "quality_score": 0.8,
         },
     ]
     (index_dir / "catalog.json").write_text(
@@ -275,8 +272,9 @@ def test_knowledge_loader():
 
         catalog = load_knowledge_catalog(knowledge_root)
         assert len(catalog) == 2
-        assert catalog[0]["doc_id"] == "agent-design"  # sorted by doc_id
-        assert catalog[1]["doc_id"] == "rl-overview"
+        assert catalog[0]["title"] == "Agent System Design"  # sorted by title
+        assert catalog[1]["title"] == "RL for LLM Post-Training"
+        assert catalog[0]["summary"].startswith("Notes on runtime architecture")
         assert isinstance(catalog[0]["tags"], list)  # string tags normalized
         print("  Knowledge loader OK")
 
@@ -315,17 +313,40 @@ def test_prompt_builder():
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
         _create_workspace(workspace)
+        session_root = workspace / "sessions" / "demo-01"
+        project_root = session_root / "project"
+        docs_root = session_root / "docs"
+        state_root = session_root / ".state"
 
-        prompt = _build_system_prompt(workspace, "core_agent")
+        prompt = _build_system_prompt(
+            workspace,
+            "core_agent",
+            session_id="demo-01",
+            session_root=session_root,
+            project_root=project_root,
+            docs_root=docs_root,
+            state_root=state_root,
+        )
 
         assert "Core Agent" in prompt
         assert "search-web" in prompt  # skill injected
         assert "rl-overview" in prompt  # knowledge injected
         assert "load-skill" in prompt  # builtin loader injected
         assert str(workspace) in prompt  # workspace path injected
+        assert "demo-01" in prompt
+        assert str(session_root) in prompt
+        assert str(project_root) in prompt
+        assert str(docs_root) in prompt
+        assert str(state_root) in prompt
         assert "{{SKILLS_META_FROM_JSON}}" not in prompt  # placeholder replaced
         assert "{{KNOWLEDGE_META_FROM_JSON}}" not in prompt
         assert "{{BUILTIN_REFERENCE_LOADERS}}" not in prompt
+        assert "{{WORKSPACE_ROOT}}" not in prompt
+        assert "{{SESSION_ID}}" not in prompt
+        assert "{{SESSION_ROOT}}" not in prompt
+        assert "{{PROJECT_ROOT}}" not in prompt
+        assert "{{DOCS_ROOT}}" not in prompt
+        assert "{{STATE_ROOT}}" not in prompt
         assert "{{RUNTIME_WORKSPACE}}" not in prompt
         print("  Prompt builder OK")
 

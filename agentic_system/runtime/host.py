@@ -5,7 +5,7 @@ with a clean host built on the new core abstractions.
 
 Usage::
 
-    host = RuntimeHost(workspace="/path/to/workspace", provider="ollama")
+    host = RuntimeHost(workspace="/path/to/workspace", session_id="project-01", provider="ollama")
     host.start()
 """
 
@@ -98,8 +98,8 @@ class RuntimeHost:
     3. Builds the system prompt from the workspace content
 
     Args:
-        workspace: Working directory for the agent session.
-        session_id: Optional session identifier used to resume/persist state.
+        workspace: Global workspace root for shared skills, knowledge, and sessions.
+        session_id: Session identifier used to resume/persist project state.
         provider: LLM provider name ("ollama", "deepseek", "lmstudio", "zai", etc.).
         mode: Execution mode ("auto" or "controlled").
         model: Model name override (uses provider defaults if not specified).
@@ -137,12 +137,17 @@ class RuntimeHost:
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.session_id = _normalize_session_id(session_id) if session_id else None
-        self.session_path = (
-            self.workspace / ".sessions" / f"{self.session_id}.json"
-            if self.session_id
-            else None
-        )
+        if session_id is None:
+            raise ValueError("session_id is required.")
+        self.session_id = _normalize_session_id(session_id)
+        self.session_root = (self.workspace / "sessions" / self.session_id).resolve()
+        self.project_root = self.session_root / "project"
+        self.docs_root = self.session_root / "docs"
+        self.state_root = self.session_root / ".state"
+        for path in (self.session_root, self.project_root, self.docs_root, self.state_root):
+            path.mkdir(parents=True, exist_ok=True)
+        self.session_path = (self.state_root / "session.json").resolve()
+        self._legacy_session_path = (self.workspace / ".sessions" / f"{self.session_id}.json").resolve()
         self._session_loaded = False
         self.provider_name = provider
         self.mode = mode
@@ -169,6 +174,11 @@ class RuntimeHost:
         self._agent = Agent(
             self._model,
             workspace=self.workspace,
+            session_id=self.session_id,
+            session_root=self.session_root,
+            project_root=self.project_root,
+            docs_root=self.docs_root,
+            state_root=self.state_root,
         )
 
         # Create environment with sandbox executor
@@ -177,11 +187,14 @@ class RuntimeHost:
             executor=sandbox_executor,
             mode=mode,
         )
-        if self.session_path is not None:
-            if self._env.load_session(self.session_path):
-                raw_session = _read_session_payload(self.session_path) or {}
-                self._agent.last_prompt = str(raw_session.get("last_prompt", "") or "")
-                self._session_loaded = True
+        raw_session = None
+        if self._env.load_session(self.session_path):
+            raw_session = _read_session_payload(self.session_path) or {}
+        elif self._legacy_session_path.exists() and self._env.load_session(self._legacy_session_path):
+            raw_session = _read_session_payload(self._legacy_session_path) or {}
+        if raw_session is not None:
+            self._agent.last_prompt = str(raw_session.get("last_prompt", "") or "")
+            self._session_loaded = True
 
         # Wire model and loop into environment for sub-agent delegation
         self._env.set_model_ref(self._model)
@@ -301,11 +314,8 @@ class RuntimeHost:
         """
         print(f"Agentic System — provider={self.provider_name}, mode={self.mode}")
         print(f"Workspace: {self.workspace}")
-        if self.session_id:
-            state = "resumed" if self._session_loaded else "new"
-            print(f"Session: {self.session_id} ({state})")
-        else:
-            print("Session: ephemeral")
+        state = "resumed" if self._session_loaded else "new"
+        print(f"Session: {self.session_id} ({state})")
         print("Type /help for commands. Type /exit to quit.")
         print("Multiline: Enter adds lines, Ctrl+D submits, Ctrl+C cancels.\n")
 
@@ -393,8 +403,12 @@ class RuntimeHost:
             f"provider={self.provider_name}",
             f"mode={self.mode}",
             f"workspace={self.workspace}",
-            f"session_id={self.session_id or 'none'}",
+            f"session_id={self.session_id}",
             f"session_state={self._session_state()}",
+            f"session_root={self.session_root}",
+            f"project_root={self.project_root}",
+            f"docs_root={self.docs_root}",
+            f"state_root={self.state_root}",
             f"image_analysis={os.environ.get('IMAGE_ANALYSIS_PROVIDER', 'none')}"
             f"/{os.environ.get('IMAGE_ANALYSIS_MODEL', 'none')}",
             f"image_generation={os.environ.get('IMAGE_GENERATION_PROVIDER', 'none')}"
@@ -414,9 +428,6 @@ class RuntimeHost:
 
     def _open_session_field_view(self, field: str) -> str:
         """Persist and open a field-specific HTML view for the current session."""
-        if self.session_path is None or self.session_id is None:
-            return "Inspection commands require --session-id because no session file exists."
-
         self._persist_session()
         raw_session = _read_session_payload(self.session_path)
         if raw_session is None:
@@ -432,7 +443,7 @@ class RuntimeHost:
             value=value,
         )
 
-        view_dir = self.session_path.parent / "views"
+        view_dir = self.state_root / "views"
         view_dir.mkdir(parents=True, exist_ok=True)
         view_path = (view_dir / f"{self.session_id}.{field}.html").resolve()
         view_path.write_text(html, encoding="utf-8")
@@ -443,9 +454,6 @@ class RuntimeHost:
 
     def _persist_session(self) -> None:
         """Persist session state when a named session is active."""
-        if self.session_path is None:
-            return
-        
         self._env.save_session(
             self.session_path,
             extra_fields={"last_prompt": getattr(self._agent, "last_prompt", "")}
@@ -453,6 +461,4 @@ class RuntimeHost:
 
     def _session_state(self) -> str:
         """Return a short user-visible description of current session mode."""
-        if self.session_id is None:
-            return "ephemeral"
         return "loaded" if self._session_loaded else "new"

@@ -5,8 +5,8 @@ and tool configuration from command-line arguments.
 
 Usage::
 
-    python -m agentic_system.runtime.cli --workspace /path/to/workspace
-    python -m agentic_system.runtime.cli --provider deepseek --mode auto --workspace .
+    python -m agentic_system.runtime.cli --workspace /path/to/workspace --session-id website-01
+    python -m agentic_system.runtime.cli --provider deepseek --mode auto --workspace . --session-id news-site
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  %(prog)s --workspace .\n"
-            "  %(prog)s --provider deepseek --model deepseek-chat --workspace ~/agent\n"
-            "  %(prog)s --provider ollama --mode auto --workspace /tmp/sandbox\n"
+            "  %(prog)s --workspace . --session-id website-01\n"
+            "  %(prog)s --provider deepseek --model deepseek-chat --workspace ~/agent --session-id research-01\n"
+            "  %(prog)s --provider ollama --mode auto --workspace /tmp/sandbox --session-id sandbox-01\n"
         ),
     )
 
@@ -55,8 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--session-id",
-        default=None,
-        help="Optional session identifier for loading and persisting conversation state",
+        required=True,
+        help="Session identifier for loading and persisting conversation state",
     )
 
     # Tool configuration
