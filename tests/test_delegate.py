@@ -219,7 +219,7 @@ def test_full_delegation_loop():
         # Should get the final answer
         assert "Guido" in result
         assert len(model.calls) >= 3  # core(delegate) + sub(chat) + core(chat)
-        assert "runtime> Delegating to sub-agent" in output.getvalue()
+        assert f"{TURN_SEPARATOR}\nruntime> Delegating to sub-agent" in output.getvalue()
         assert TURN_SEPARATOR in output.getvalue()
         assert "sub-agent>" not in output.getvalue()
 

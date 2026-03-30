@@ -7,7 +7,7 @@ from typing import Callable, Optional
 from helix.core.action import Action
 from helix.core.environment import ApprovalResult, Environment
 from helix.core.state import Turn
-from helix.runtime.display import write_separator
+from helix.runtime.display import write_framed_text
 
 
 PromptFn = Callable[[str], str]
@@ -79,20 +79,24 @@ class ApprovalPolicy:
             return True
 
         # Prompt user
-        print(f"\nruntime> Action requires approval:")
-        print(f"Type: {action.payload.get('code_type', 'bash')}")
+        details = [
+            "runtime> Action requires approval:",
+            f"Type: {action.payload.get('code_type', 'bash')}",
+        ]
         if "script" in action.payload:
-            print(f"Script:\n{action.payload['script']}\n")
+            details.append(f"Script:\n{action.payload['script']}")
         elif "script_path" in action.payload:
-            print(f"Script Path: {action.payload['script_path']}")
-            print(f"Args: {action.payload.get('script_args', [])}\n")
+            details.append(f"Script Path: {action.payload['script_path']}")
+            details.append(f"Args: {action.payload.get('script_args', [])}")
 
-        print("Approve this execution? [y/N/s/p/k]")
-        print("  y: allow once")
-        print("  s: allow same exact exec for this session")
-        print("  p: allow same script pattern for this session")
-        print("  k: allow same script_path for this session (ignore args)")
-        write_separator()
+        details.extend([
+            "Approve this execution? [y/N/s/p/k]",
+            "  y: allow once",
+            "  s: allow same exact exec for this session",
+            "  p: allow same script pattern for this session",
+            "  k: allow same script_path for this session (ignore args)",
+        ])
+        write_framed_text("\n".join(details), None)
 
         try:
             choice = self._prompt("> ").strip().lower()
@@ -120,8 +124,7 @@ class ApprovalPolicy:
                 self.approved_paths.add(action.payload["script_path"])
                 return True
             else:
-                print("runtime> 'k' requires a script_path. Denied.")
-                write_separator()
+                write_framed_text("runtime> 'k' requires a script_path. Denied.", None)
                 return Turn(
                     role="runtime",
                     content="Execution denied by requester during approval prompt.",

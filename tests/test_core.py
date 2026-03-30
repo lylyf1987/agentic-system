@@ -293,7 +293,7 @@ def test_run_loop_compaction_failure_is_ui_only():
 
         assert "compaction failed" in result.lower()
         assert compactor.calls == 3
-        assert "runtime> Session paused:" in captured.getvalue()
+        assert f"{TURN_SEPARATOR}\nruntime> Session paused:" in captured.getvalue()
         assert TURN_SEPARATOR in captured.getvalue()
         assert len(env.full_history) == 2
         assert len(env.observation) == 2

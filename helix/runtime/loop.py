@@ -14,7 +14,7 @@ from ..core.action import Action, ActionParseError
 from ..core.agent import Agent
 from ..core.environment import Environment, CompactionError, ExecutionInterrupted
 from ..core.state import Turn
-from .display import write_separator
+from .display import write_framed_text
 
 
 DEFAULT_MAX_TURNS = 9999999
@@ -64,7 +64,7 @@ def run_loop(
                 f"Session paused: context window is full and compaction failed ({exc}). "
                 f"Please start a new session or reduce context."
             )
-            _print(output, f"\nruntime> {msg}\n", add_separator=True)
+            _print(output, f"runtime> {msg}\n", add_separator=True)
             return msg
 
         # 2. Agent decides
@@ -90,7 +90,7 @@ def run_loop(
             ))
             if consecutive_failures >= max_retries:
                 msg = "Loop ended: too many consecutive parse failures."
-                _print(output, f"\nruntime> {msg}\n", add_separator=True)
+                _print(output, f"runtime> {msg}\n", add_separator=True)
                 return msg
             continue
 
@@ -145,7 +145,7 @@ def run_loop(
 
     # Turn limit reached
     msg = "Loop ended: maximum turns reached."
-    _print(output, f"\nruntime> {msg}\n", add_separator=True)
+    _print(output, f"runtime> {msg}\n", add_separator=True)
     return msg
 
 # --------------------------------------------------------------------------- #
@@ -158,10 +158,11 @@ def _print(output: TextIO, text: str = "", *, action: Action | None = None, add_
     if "\n" not in text and action is None:
         pass
     elif text:
-        output.write(text)
         if add_separator:
-            write_separator(output)
-        output.flush()
+            write_framed_text(text, output)
+        else:
+            output.write(text)
+            output.flush()
 
 # --------------------------------------------------------------------------- #
 # Agent record formatting

@@ -326,7 +326,7 @@ def test_host_process_message():
 
         # Requester-facing UI should not include action metadata
         assert "Hello agent!" not in output
-        assert f"core-agent> Hello from the agent!\n{TURN_SEPARATOR}" in output
+        assert f"{TURN_SEPARATOR}\ncore-agent> Hello from the agent!\n{TURN_SEPARATOR}" in output
         assert "[next_action]" not in output
         assert "[action_input]" not in output
 
@@ -406,8 +406,8 @@ def test_host_process_exec():
         assert len(runtime_turns) == 1
         assert "test-output" in runtime_turns[0].content
         assert "Run a test" not in output
-        assert f"core-agent> Let me check.\n{TURN_SEPARATOR}" in output
-        assert f"core-agent> Done!\n{TURN_SEPARATOR}" in output
+        assert f"{TURN_SEPARATOR}\ncore-agent> Let me check.\n{TURN_SEPARATOR}" in output
+        assert f"{TURN_SEPARATOR}\ncore-agent> Done!\n{TURN_SEPARATOR}" in output
 
         print("  Exec processing OK")
 
@@ -427,7 +427,7 @@ def test_host_process_message_runtime_error():
             host._process_message("Who are you?")
 
         output = captured.getvalue()
-        assert f"runtime> Agent error: Missing API key for provider 'zai'" in output
+        assert f"{TURN_SEPARATOR}\nruntime> Agent error: Missing API key for provider 'zai'" in output
         assert TURN_SEPARATOR in output
         runtime_turns = [t for t in host._env.full_history if t.role == "runtime"]
         assert len(runtime_turns) == 1

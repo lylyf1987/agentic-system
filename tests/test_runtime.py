@@ -217,7 +217,7 @@ def test_approval_prompt_prints_separator_before_input():
         assert policy(env, action) is True
 
     output = captured.getvalue()
-    assert "runtime> Action requires approval:" in output
+    assert f"{TURN_SEPARATOR}\nruntime> Action requires approval:" in output
     assert TURN_SEPARATOR in output
     assert f"{TURN_SEPARATOR}\n> " in output
     print("  Approval separator before input OK")

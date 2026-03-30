@@ -27,6 +27,18 @@ def write_separator(output: Optional[TextIO] = None) -> None:
     stream.flush()
 
 
+def write_framed_text(text: str, output: Optional[TextIO] = None) -> None:
+    """Write one requester-facing block framed by separator lines."""
+    stream = output if output is not None else sys.stdout
+    body = str(text)
+    write_separator(stream)
+    stream.write(body)
+    if not body.endswith("\n"):
+        stream.write("\n")
+    write_separator(stream)
+    stream.flush()
+
+
 def extract_streaming_response(partial_text: str) -> Optional[str]:
     """Extract the 'response' value from a partial JSON stream.
 
@@ -113,8 +125,7 @@ class StreamingDisplay:
         if not self._response_text:
             return
         output = self._output if self._output is not None else sys.stdout
-        output.write(f"\n{self._current_name}> {self._response_text}\n")
-        write_separator(output)
+        write_framed_text(f"{self._current_name}> {self._response_text}", output)
 
     def discard(self) -> None:
         """Drop any buffered response from a failed parse attempt."""
