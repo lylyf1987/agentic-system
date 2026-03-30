@@ -109,7 +109,7 @@ class Environment:
         workspace: Path,
         *,
         mode: str = "controlled",
-        token_limit: int = int(80_000 * 0.75),
+        token_limit: int = int(100_000 * 0.75),
         keep_last_k: int = 10,
         executor: Optional[SandboxExecutor] = None,
     ) -> None:

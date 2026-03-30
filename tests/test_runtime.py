@@ -164,6 +164,47 @@ def test_approval_policy_pattern_mode():
     print("  Approval pattern mode OK")
 
 
+def test_approval_policy_pattern_mode_rejects_script_path():
+    prompts: list[str] = []
+
+    def fake_prompt(_prompt: str) -> str:
+        prompts.append("p")
+        return "p"
+
+    policy = ApprovalPolicy(mode="controlled", prompt=fake_prompt)
+    env = Environment(workspace=Path("."))
+
+    action1 = Action(
+        response="",
+        type="exec",
+        payload={
+            "code_type": "python",
+            "script_path": "skills/a.py",
+            "script_args": ["--value", "123"],
+        },
+    )
+    result1 = policy(env, action1)
+    assert isinstance(result1, Turn)
+    assert "denied by requester" in result1.content.lower()
+    assert not policy.approved_patterns
+
+    action2 = Action(
+        response="",
+        type="exec",
+        payload={
+            "code_type": "python",
+            "script_path": "skills/b.py",
+            "script_args": ["--value", "456"],
+        },
+    )
+    result2 = policy(env, action2)
+    assert isinstance(result2, Turn)
+    assert "denied by requester" in result2.content.lower()
+    assert len(prompts) == 2
+
+    print("  Approval pattern mode rejects script_path OK")
+
+
 def test_approval_policy_controlled_deny():
     policy = ApprovalPolicy(mode="controlled", prompt=lambda _prompt: "n")
     env = Environment(workspace=Path("."))
@@ -265,6 +306,7 @@ if __name__ == "__main__":
     test_approval_policy_controlled_allow_once()
     test_approval_policy_controlled_allow_session()
     test_approval_policy_pattern_mode()
+    test_approval_policy_pattern_mode_rejects_script_path()
     test_approval_policy_controlled_deny()
     test_approval_policy_uses_injected_prompt_instead_of_raw_input()
     test_approval_policy_keyboard_interrupt_cancels()

@@ -45,13 +45,17 @@ class ApprovalPolicy:
         ).encode("utf-8")
         return hashlib.md5(content).hexdigest()
 
-    def _pattern_key(self, payload: dict) -> str:
-        """Extract a normalized pattern key from the script content.
+    def _pattern_key(self, payload: dict) -> Optional[str]:
+        """Extract a normalized pattern key for inline scripts only.
 
-        Strips variable parts (quoted strings, numbers) to match
-        structurally similar scripts.
+        Pattern approvals are defined over script content, not script paths.
+        For ``script_path`` executions the caller should use exact approval
+        (``s``) or same-path approval (``k``) instead.
         """
         script = payload.get("script", "") or ""
+        if not str(script).strip():
+            return None
+
         # Normalize whitespace, remove quoted strings and numbers
         normalized = re.sub(r'"[^"]*"', '"..."', script)
         normalized = re.sub(r"'[^']*'", "'...'", normalized)
@@ -75,7 +79,7 @@ class ApprovalPolicy:
             return True
 
         pattern_key = self._pattern_key(action.payload)
-        if pattern_key in self.approved_patterns:
+        if pattern_key and pattern_key in self.approved_patterns:
             return True
 
         # Prompt user
@@ -89,13 +93,22 @@ class ApprovalPolicy:
             details.append(f"Script Path: {action.payload['script_path']}")
             details.append(f"Args: {action.payload.get('script_args', [])}")
 
-        details.extend([
-            "Approve this execution? [y/N/s/p/k]",
-            "  y: allow once",
-            "  s: allow same exact exec for this session",
-            "  p: allow same script pattern for this session",
-            "  k: allow same script_path for this session (ignore args)",
-        ])
+        if pattern_key:
+            details.extend([
+                "Approve this execution? [y/N/s/p/k]",
+                "  y: allow once",
+                "  s: allow same exact exec for this session",
+                "  p: allow same script pattern for this session",
+                "  k: allow same script_path for this session (ignore args)",
+            ])
+        else:
+            details.extend([
+                "Approve this execution? [y/N/s/k]",
+                "  y: allow once",
+                "  s: allow same exact exec for this session",
+                "  k: allow same script_path for this session (ignore args)",
+                "  p: unavailable for script_path executions",
+            ])
         write_framed_text("\n".join(details), None)
 
         try:
@@ -117,6 +130,15 @@ class ApprovalPolicy:
             self.approved_exact.add(payload_hash)
             return True
         if choice in {"p", "pattern"}:
+            if not pattern_key:
+                write_framed_text(
+                    "runtime> 'p' requires an inline script. Use 's' or 'k' for script_path.",
+                    None,
+                )
+                return Turn(
+                    role="runtime",
+                    content="Execution denied by requester during approval prompt.",
+                )
             self.approved_patterns.add(pattern_key)
             return True
         if choice in {"k", "path", "skill"}:
