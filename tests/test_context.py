@@ -11,9 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from helix.providers.ollama import OllamaProvider
 from helix.providers.openai_compat import OpenAICompatProvider
+from helix.core.agent import Agent
 from helix.core.agent import _load_skills as load_skills
 from helix.core.agent import _load_knowledge_catalog as load_knowledge_catalog
 from helix.core.agent import _build_system_prompt
+from helix.core.state import State, Turn
 
 
 # =========================================================================== #
@@ -349,6 +351,53 @@ def test_prompt_builder():
         assert "{{STATE_ROOT}}" not in prompt
         assert "{{RUNTIME_WORKSPACE}}" not in prompt
         print("  Prompt builder OK")
+
+
+def test_agent_rebuilds_prompt_from_updated_workspace_skills():
+    """Workspace-backed agents should pick up skill metadata changes without restart."""
+
+    class _DummyModel:
+        def generate(self, prompt, *, stream=False, chunk_callback=None):
+            return ""
+
+    with tempfile.TemporaryDirectory() as td:
+        workspace = Path(td)
+        _create_workspace(workspace)
+        session_root = workspace / "sessions" / "demo-01"
+        project_root = session_root / "project"
+        docs_root = session_root / "docs"
+        state_root = session_root / ".state"
+
+        agent = Agent(
+            _DummyModel(),
+            workspace=workspace,
+            session_id="demo-01",
+            session_root=session_root,
+            project_root=project_root,
+            docs_root=docs_root,
+            state_root=state_root,
+        )
+
+        old_skill_dir = workspace / "skills" / "all-agents" / "search-web"
+        old_skill_dir.rename(workspace / "skills" / "all-agents" / "search-live")
+        (workspace / "skills" / "all-agents" / "search-live" / "SKILL.md").write_text(
+            "---\n"
+            "name: search-live\n"
+            "description: Search live data sources\n"
+            "handler: scripts/search_live.py\n"
+            "required_tools: bash\n"
+            "---\n"
+            "Updated instructions here...\n",
+            encoding="utf-8",
+        )
+
+        prompt = agent._build_prompt(
+            State(observation=[Turn(role="user", content="What skills do you have?")])
+        )
+
+        assert '"skill_id": "search-live"' in prompt
+        assert '"skill_id": "search-web"' not in prompt
+        print("  Agent prompt rebuild picks up workspace skill changes OK")
 
 
 def test_prompt_builder_unknown_role():

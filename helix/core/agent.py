@@ -324,17 +324,21 @@ class Agent:
         self.name = name
         self.allowed_actions = allowed_actions
         self.last_prompt = ""
+        self._workspace_prompt_args: dict[str, Any] | None = None
 
         if workspace is not None:
+            self._workspace_prompt_args = {
+                "workspace_path": workspace,
+                "role": role,
+                "session_id": session_id,
+                "session_root": session_root,
+                "project_root": project_root,
+                "docs_root": docs_root,
+                "state_root": state_root,
+                "sub_agent_role": sub_agent_role,
+            }
             self.system_prompt = _build_system_prompt(
-                workspace,
-                role,
-                session_id=session_id,
-                session_root=session_root,
-                project_root=project_root,
-                docs_root=docs_root,
-                state_root=state_root,
-                sub_agent_role=sub_agent_role,
+                **self._workspace_prompt_args,
             )
         else:
             self.system_prompt = system_prompt  # type: ignore[assignment]
@@ -371,6 +375,8 @@ class Agent:
             3. workflow_history  — chronological turns (excluding latest)
             4. latest_context    — the immediate turn to respond to (end)
         """
+        if self._workspace_prompt_args is not None:
+            self.system_prompt = _build_system_prompt(**self._workspace_prompt_args)
         sections: list[str] = [self.system_prompt]
 
         if state.workflow_summary:
