@@ -12,10 +12,13 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .host import RuntimeHost
+from .local_model_service.paths import default_cache_root
+from .local_model_service.preparer import ModelPreparationError, prepare_model_spec
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,8 +64,69 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_model_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Helix model management")
+    subparsers = parser.add_subparsers(dest="model_command", required=True)
+
+    download = subparsers.add_parser("download", help="Download and validate a local model spec")
+    download.add_argument("--spec", required=True, help="Absolute path to a model_spec.json file")
+    download.add_argument("--timeout", type=int, default=3600, help="Preparation timeout in seconds")
+    return parser
+
+
+def _run_model_command(argv: list[str]) -> int:
+    parser = _build_model_parser()
+    args = parser.parse_args(argv)
+    if args.model_command != "download":
+        raise ValueError(f"unsupported model command: {args.model_command}")
+    spec_path = Path(args.spec).expanduser().resolve()
+    payload = json.loads(spec_path.read_text(encoding="utf-8"))
+    try:
+        normalized, model_root = prepare_model_spec(
+            cache_root=default_cache_root(),
+            model_spec=payload,
+            backend_mode="real",
+            timeout_seconds=max(30, int(args.timeout)),
+            progress_stream=sys.stderr,
+        )
+    except ModelPreparationError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "backend": "",
+                    "task_type": "",
+                    "model_root": "",
+                    "error_code": exc.error_code,
+                    "message": exc.message,
+                },
+                ensure_ascii=True,
+            )
+        )
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "backend": normalized["backend"],
+                "task_type": normalized["task_type"],
+                "model_root": str(model_root),
+                "error_code": "",
+                "message": f"prepared model {normalized['id']}",
+            },
+            ensure_ascii=True,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] = None) -> int:
-    """Parse CLI args and start the RuntimeHost."""
+    """Parse CLI args and start the RuntimeHost or model-management command."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["model"]:
+        return _run_model_command(argv[1:])
+
     parser = build_parser()
     args = parser.parse_args(argv)
     workspace = Path(args.workspace).expanduser().resolve()

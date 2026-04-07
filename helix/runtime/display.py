@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import TextIO, Optional
+from typing import Any, Optional, TextIO
 
 _JSON_ESCAPE_MAP = {
     '"': '"',
@@ -18,6 +18,37 @@ _JSON_ESCAPE_MAP = {
 }
 
 TURN_SEPARATOR = "-" * 60
+
+_EXEC_PAYLOAD_ORDER = (
+    "job_name",
+    "code_type",
+    "script_path",
+    "script",
+    "script_args",
+    "timeout_seconds",
+)
+
+
+def _has_display_value(value: Any) -> bool:
+    return value not in (None, "", [], {})
+
+
+def iter_exec_payload_items(payload: dict[str, Any]) -> list[tuple[str, Any]]:
+    """Return non-empty exec payload items in stable display order."""
+    seen: set[str] = set()
+    items: list[tuple[str, Any]] = []
+
+    for key in _EXEC_PAYLOAD_ORDER:
+        if key in payload and _has_display_value(payload[key]):
+            items.append((key, payload[key]))
+            seen.add(key)
+
+    for key in sorted(payload):
+        if key in seen or not _has_display_value(payload[key]):
+            continue
+        items.append((key, payload[key]))
+
+    return items
 
 
 def write_separator(output: Optional[TextIO] = None) -> None:

@@ -223,6 +223,38 @@ def test_host_uses_docker_when_available():
         print("  RuntimeHost Docker selection OK")
 
 
+def test_host_bootstrap_prunes_renamed_packaged_skills():
+    with tempfile.TemporaryDirectory() as td:
+        workspace = Path(td)
+        skills_root = workspace / "skills" / "all-agents"
+        legacy_generation = skills_root / "generate-image-locally"
+        legacy_analysis = skills_root / "analyze-image-from-ollama"
+        legacy_generation.mkdir(parents=True, exist_ok=True)
+        legacy_analysis.mkdir(parents=True, exist_ok=True)
+        (legacy_generation / "SKILL.md").write_text("---\nname: legacy gen\n---\n", encoding="utf-8")
+        (legacy_analysis / "SKILL.md").write_text("---\nname: legacy analyze\n---\n", encoding="utf-8")
+        manifest_path = workspace / ".runtime" / "builtin_skills_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                [
+                    "all-agents/generate-image-locally",
+                    "all-agents/analyze-image-from-ollama",
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        _make_host(workspace)
+
+        assert not legacy_generation.exists()
+        assert not legacy_analysis.exists()
+        assert (skills_root / "generate-image").exists()
+        assert (skills_root / "analyze-image").exists()
+        print("  RuntimeHost packaged-skill prune OK")
+
+
 def test_host_docker_starts_local_model_service_when_supported():
     """Verify Docker startup wires the local model service when supported."""
     calls: dict[str, object] = {}

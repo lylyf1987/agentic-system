@@ -85,10 +85,12 @@ def test_real_skill_loading():
     skills = load_skills(BUILTIN_SKILLS)
     skill_ids = {s["skill_id"] for s in skills}
 
-    # Should find all 9 built-in skills (7 non-loader + 2 loaders)
+    # Should find all non-loader built-in skills.
     assert "search-online-context" in skill_ids, f"Missing search-online-context, got: {skill_ids}"
-    assert "generate-image-from-pytorch" in skill_ids
-    assert "analyze-image-from-ollama" in skill_ids
+    assert "generate-image" in skill_ids
+    assert "generate-audio" in skill_ids
+    assert "generate-video" in skill_ids
+    assert "analyze-image" in skill_ids
     assert "documentation-distillation" in skill_ids
     assert "file-based-planning" in skill_ids
     assert "skill-creation" in skill_ids
@@ -172,15 +174,17 @@ def test_workspace_knowledge_loading():
 
 
 def test_bootstrap_skills():
-    """Verify that RuntimeHost bootstraps all 9 skills into a fresh workspace."""
+    """Verify that RuntimeHost bootstraps all packaged skills into a fresh workspace."""
     with tempfile.TemporaryDirectory() as td:
         host = _make_host(Path(td))
         ws_skills = Path(td) / "skills" / "all-agents"
         skill_dirs = sorted(p.name for p in ws_skills.iterdir() if p.is_dir())
-        assert len(skill_dirs) == 9, f"Expected 9, got {len(skill_dirs)}: {skill_dirs}"
+        assert len(skill_dirs) == 11, f"Expected 11, got {len(skill_dirs)}: {skill_dirs}"
         assert "search-online-context" in skill_dirs
-        assert "generate-image-from-pytorch" in skill_dirs
-        assert "analyze-image-from-ollama" in skill_dirs
+        assert "generate-image" in skill_dirs
+        assert "generate-audio" in skill_dirs
+        assert "generate-video" in skill_dirs
+        assert "analyze-image" in skill_dirs
         assert "load-skill" in skill_dirs
         print(f"  Bootstrap skills OK ({len(skill_dirs)} skills synced)")
 
@@ -194,12 +198,50 @@ def test_bootstrapped_prompt_builder():
         assert prompt, "Empty system prompt"
         assert len(prompt) > 500, f"System prompt too short ({len(prompt)} chars)"
         assert "search-online-context" in prompt
-        assert "generate-image-from-pytorch" in prompt
-        assert "analyze-image-from-ollama" in prompt
+        assert "generate-image" in prompt
+        assert "generate-audio" in prompt
+        assert "generate-video" in prompt
+        assert "analyze-image" in prompt
         assert "load-skill" in prompt
         assert "load-knowledge-docs" not in prompt
 
         print(f"  Bootstrapped prompt builder OK ({len(prompt)} chars)")
+
+
+def test_bootstrap_prunes_renamed_packaged_skills_but_keeps_user_skills():
+    with tempfile.TemporaryDirectory() as td:
+        workspace = Path(td)
+        skills_root = workspace / "skills" / "all-agents"
+        legacy_generation_skill = skills_root / "generate-image-from-pytorch"
+        legacy_analysis_skill = skills_root / "analyze-image-from-ollama"
+        user_skill = skills_root / "user-custom-skill"
+        legacy_generation_skill.mkdir(parents=True, exist_ok=True)
+        legacy_analysis_skill.mkdir(parents=True, exist_ok=True)
+        user_skill.mkdir(parents=True, exist_ok=True)
+        (legacy_generation_skill / "SKILL.md").write_text("---\nname: Legacy Generation\n---\n", encoding="utf-8")
+        (legacy_analysis_skill / "SKILL.md").write_text("---\nname: Legacy Analysis\n---\n", encoding="utf-8")
+        (user_skill / "SKILL.md").write_text("---\nname: User\n---\n", encoding="utf-8")
+        manifest_path = workspace / ".runtime" / "builtin_skills_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                [
+                    "all-agents/generate-image-from-pytorch",
+                    "all-agents/analyze-image-from-ollama",
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        _make_host(workspace)
+
+        assert not legacy_generation_skill.exists()
+        assert not legacy_analysis_skill.exists()
+        assert (skills_root / "generate-image").exists()
+        assert (skills_root / "analyze-image").exists()
+        assert user_skill.exists()
+        print("  Packaged skill rename prune OK")
 
 
 # =========================================================================== #

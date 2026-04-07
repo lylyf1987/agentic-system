@@ -28,10 +28,10 @@ from prompt_toolkit.key_binding import KeyBindings
 
 from ..core.agent import Agent
 from ..core.environment import Environment
-from ..core.local_model_service import LocalModelServiceManager, local_model_service_supported
 from ..core.state import Turn
 from ..core.sandbox import DockerSandboxExecutor, docker_is_available
 from ..providers import create_provider
+from .local_model_service import LocalModelServiceManager, local_model_service_supported
 from .loop import run_loop
 from .approval import ApprovalPolicy
 from .display import StreamingDisplay, write_framed_text
@@ -43,6 +43,7 @@ from .debug import render_session_view_html, open_file_in_viewer
 # --------------------------------------------------------------------------- #
 
 _BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent.parent / "builtin_skills"
+_BUILTIN_SKILLS_MANIFEST_REL = Path(".runtime") / "builtin_skills_manifest.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -234,6 +235,18 @@ class RuntimeHost:
 
         ws_skills = self.workspace / "skills"
         ws_skills.mkdir(parents=True, exist_ok=True)
+        manifest_path = self.workspace / _BUILTIN_SKILLS_MANIFEST_REL
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            previous_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous_manifest = []
+        previously_managed = {
+            str(item).strip()
+            for item in previous_manifest
+            if isinstance(item, str) and str(item).strip()
+        }
+        currently_managed: set[str] = set()
 
         for scope_dir in sorted(p for p in _BUILTIN_SKILLS_ROOT.iterdir() if p.is_dir()):
             if scope_dir.name.startswith((".", "_")):
@@ -247,6 +260,8 @@ class RuntimeHost:
                 if not (skill_dir / "SKILL.md").exists():
                     continue
                 target_skill = target_scope / skill_dir.name
+                managed_rel = f"{scope_dir.name}/{skill_dir.name}"
+                currently_managed.add(managed_rel)
                 # Replace entire skill directory to pick up updates
                 if target_skill.exists():
                     if target_skill.is_dir():
@@ -254,6 +269,19 @@ class RuntimeHost:
                     else:
                         target_skill.unlink()
                 shutil.copytree(skill_dir, target_skill)
+
+        for managed_rel in sorted(previously_managed - currently_managed):
+            target = ws_skills / managed_rel
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+
+        manifest_path.write_text(
+            json.dumps(sorted(currently_managed), indent=2),
+            encoding="utf-8",
+        )
 
     # ----- Agent & streaming ------------------------------------------------ #
 

@@ -150,7 +150,7 @@ Precedence is:
 
 | Variable | Used by | Default / Notes |
 |---|---|---|
-| `OLLAMA_BASE_URL` | core provider, `analyze-image-from-ollama` skill | `http://localhost:11434` on the host; Docker execs translate loopback to `host.docker.internal` automatically |
+| `OLLAMA_BASE_URL` | core provider, `analyze-image` skill | `http://localhost:11434` on the host; Docker execs translate loopback to `host.docker.internal` automatically |
 | `OLLAMA_MODEL` | core provider | `llama3.1:8b` |
 | `OLLAMA_TIMEOUT_SECONDS` | core provider | `300` |
 | `OLLAMA_KEEP_ALIVE` | core provider | optional Ollama keep-alive duration |
@@ -173,17 +173,18 @@ Precedence is:
 | Variable | Used by | Default / Notes |
 |---|---|---|
 | `SEARXNG_BASE_URL` | search-online-context skill | injected automatically by the Docker runtime for sandboxed search execs |
-| `HELIX_LOCAL_MODEL_SERVICE_URL` | local PyTorch skills | injected automatically by the Docker runtime on macOS Apple Silicon; points to the Helix-owned local inference host |
-| `HELIX_LOCAL_MODEL_SERVICE_TOKEN` | local PyTorch skills | injected automatically by the Docker runtime on macOS Apple Silicon |
-| `HF_TOKEN` | Hugging Face-backed local PyTorch skills | recommended before starting Helix so local model downloads/auth work reliably |
+| `HELIX_LOCAL_MODEL_SERVICE_URL` | local MLX/PyTorch skills | injected automatically by the Docker runtime on macOS Apple Silicon; points to the Helix-owned local inference host |
+| `HELIX_LOCAL_MODEL_SERVICE_TOKEN` | local MLX/PyTorch skills | injected automatically by the Docker runtime on macOS Apple Silicon |
+| `HF_TOKEN` | Hugging Face-backed local MLX/PyTorch skills | recommended before starting Helix so local model downloads/auth work reliably |
 | `HELIX_HOME` | shared Helix service state | override the default global Helix home at `~/.helix` |
 
 ### Runtime Controls
 
 | Variable | Used by | Default / Notes |
 |---|---|---|
-| `AGENTIC_DOCKER_SANDBOX_TIMEOUT` | Docker sandbox executor | `600` seconds |
+| `AGENTIC_DOCKER_SANDBOX_TIMEOUT` | Docker sandbox executor | `1800` seconds |
 | `AGENTIC_DOCKER_BUILD_TIMEOUT` | Docker image build / pull steps | `1800` seconds |
+| `HELIX_LOCAL_MODEL_SERVICE_WORKER_TIMEOUT` | Helix local inference host worker responses | `1200` seconds |
 
 ### Example: Z.AI General API vs Coding API
 
@@ -223,35 +224,100 @@ The inspection commands operate on the active named session.
 
 ## Built-In Tool Services
 
-### Image Skills
+### Image and Audio Skills
 
-The built-in image capabilities are skill-owned rather than CLI-configured:
+The built-in media capabilities are skill-owned rather than CLI-configured:
 
-- `analyze-image-from-ollama` uses `glm-ocr` through a local Ollama daemon
-- `generate-image-from-pytorch` uses `Tongyi-MAI/Z-Image-Turbo`
+- `analyze-image` uses `glm-ocr` through a local Ollama daemon
+- `generate-image` currently defaults to `uqer1244/MLX-z-image` through the `mlx` backend
+- `generate-audio` currently defaults to `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` through the `pytorch` backend
+- `generate-video` currently defaults to `Lightricks/LTX-Video::ltxv-13b-0.9.8-dev.safetensors` through the `pytorch` backend
 
-The core Helix CLI does not expose separate image provider/model flags.
+The core Helix CLI does not expose separate media provider/model flags.
 
-`analyze-image-from-ollama` calls Ollama directly from inside the Docker sandbox:
+`generate-image` is a multi-script skill with two explicit phases:
+
+- first run `scripts/prepare_model.py` to download / warm the model
+- then run `scripts/generate_image.py` with `--prompt` plus `--output-dir` or `--output-path`
+
+`generate-audio` is also a multi-script skill with two explicit phases:
+
+- first run `scripts/prepare_model.py` to download / warm the model
+- then run `scripts/generate_audio.py` with `--text` plus `--output-dir` or `--output-path`
+- the host machine running the local model service must also have `sox` installed on `PATH`
+- on macOS, install it with `brew install sox`
+
+`generate-video` is also a multi-script skill with two explicit phases:
+
+- first run `scripts/prepare_model.py` to download / warm the model
+- then run `scripts/generate_video.py` with `--prompt` plus `--output-dir` or `--output-path`
+- add `--image-path` only when you want image-conditioned video rather than text-only video
+- the current LTX integration supports text-to-video and single-image-conditioned video, but not the broader upstream multi-condition or long-duration pipeline variants
+
+`analyze-image` calls Ollama directly from inside the Docker sandbox:
 
 - Helix does not start or stop Ollama for you
 - make sure `ollama serve` is running before you launch Helix
 - install the OCR model with `ollama pull glm-ocr`
 - if you use a non-default Ollama URL, set `OLLAMA_BASE_URL` before launching Helix
 
-On macOS Apple Silicon, the Docker runtime still starts a narrow host-native local PyTorch inference service for PyTorch-backed skills and injects the service URL/token into Docker execs automatically.
+On macOS Apple Silicon, the Docker runtime still starts a narrow host-native local inference service for MLX- and PyTorch-backed skills and injects the service URL/token into Docker execs automatically.
 
 That host is stable across skills:
 
 - Helix owns the service lifecycle and worker memory management
-- the host exposes one fixed inference endpoint at `/infer`
-- skills choose the `model_id`, `task_type`, and task-specific `inputs` they send to the service
+- the host exposes a prepare endpoint at `/models/prepare` and an inference endpoint at `/infer`
+- skills send a declarative `model_spec` plus the task-specific `task_type`, `workspace_root`, and `inputs`
+- adapter selection stays internal to the host; skills do not send an `adapter_type`
 - Helix core does not expose image backend flags through the CLI
+
+The `/models/prepare` request envelope is:
+
+- `model_spec`
+- `request_timeout_seconds`
+
+The `/infer` request envelope is:
+
+- `task_type`
+- `model_spec`
+- `workspace_root`
+- `request_timeout_seconds`
+- `inputs`
+
+The `/infer` response envelope is:
+
+- `status`
+- `task_type`
+- `backend`
+- `model_id`
+- `outputs`
+- `error_code`
+- `message`
+
+Curated v1 support matrix:
+
+- `text_to_image`
+  - `pytorch`: supported
+  - `mlx`: supported
+- `image_to_text`
+  - `pytorch`: supported
+  - `mlx`: supported
+- `text_to_video`
+  - `pytorch`: supported
+  - `mlx`: returns `unsupported_backend_task`
+- `text_image_to_video`
+  - `pytorch`: supported
+  - `mlx`: returns `unsupported_backend_task`
+- `text_to_audio`
+  - `pytorch`: supported
+  - `mlx`: returns `unsupported_backend_task`
+
+Helix accepts the legacy task name `image_generation` as a temporary alias for `text_to_image`.
 
 So the boundary is:
 
 - Ollama-backed skills call Ollama directly
-- PyTorch-backed skills call the Helix-owned local inference host
+- MLX- and PyTorch-backed skills call the Helix-owned local inference host
 
 That local inference service is shared across all Helix runtimes on the machine:
 
@@ -259,7 +325,7 @@ That local inference service is shared across all Helix runtimes on the machine:
 - later Helix runtimes reuse it
 - it is stopped when the last Helix runtime exits
 
-If you use the Hugging Face-backed local PyTorch skills, export `HF_TOKEN` before launching Helix and restart Helix after changing that token.
+If you use the Hugging Face-backed local MLX/PyTorch skills, export `HF_TOKEN` before launching Helix and restart Helix after changing that token.
 
 ### Web Search: SearXNG
 
@@ -293,7 +359,8 @@ Global shared Helix service state:
 
 - `~/.helix/runtime/services/searxng`
 - `~/.helix/runtime/services/local-model-service`
-- `~/.helix/cache/local-model-service`
+- `~/.helix/cache/local-model-service/pytorch`
+- `~/.helix/cache/local-model-service/mlx`
 - `~/.helix/runtime/active-runtimes`
 
 Set `HELIX_HOME` if you want those shared global paths rooted somewhere else.

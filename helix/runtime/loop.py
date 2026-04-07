@@ -14,7 +14,7 @@ from ..core.action import Action, ActionParseError
 from ..core.agent import Agent
 from ..core.environment import Environment, CompactionError, ExecutionInterrupted
 from ..core.state import Turn
-from .display import write_framed_text
+from .display import iter_exec_payload_items, write_framed_text
 
 
 DEFAULT_MAX_TURNS = 9999999
@@ -199,18 +199,13 @@ def _format_agent_record(action: Action) -> str:
 
     if action.type == "exec" and action.payload:
         lines = ["[action_input]"]
-        for key in ("job_name", "code_type", "script_path", "script"):
-            value = action.payload.get(key)
-            if value:
-                text = str(value)
-                if "\n" in text:
-                    lines.append(f"  {key}:")
-                    lines.extend(f"    {row}" for row in text.split("\n"))
-                else:
-                    lines.append(f"  {key}: {text}")
-        args = action.payload.get("script_args")
-        if args:
-            lines.append(f"  script_args: {args}")
+        for key, value in iter_exec_payload_items(action.payload):
+            text = str(value)
+            if "\n" in text:
+                lines.append(f"  {key}:")
+                lines.extend(f"    {row}" for row in text.split("\n"))
+            else:
+                lines.append(f"  {key}: {text}")
         if len(lines) > 1:
             parts.append("\n".join(lines))
 

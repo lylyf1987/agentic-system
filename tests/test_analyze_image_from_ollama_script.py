@@ -1,4 +1,4 @@
-"""Tests for the analyze-image-from-ollama skill handler."""
+"""Tests for the analyze-image skill handler."""
 
 from __future__ import annotations
 
@@ -16,14 +16,14 @@ SCRIPT_PATH = (
     / "helix"
     / "builtin_skills"
     / "all-agents"
-    / "analyze-image-from-ollama"
+    / "analyze-image"
     / "scripts"
-    / "analyze_image_from_ollama.py"
+    / "analyze_image.py"
 )
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("analyze_image_from_ollama_script", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("analyze_image_script", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -48,7 +48,7 @@ class _FakeResponse:
         return None
 
 
-def test_analyze_image_from_ollama_local_path_success(monkeypatch):
+def test_analyze_image_local_path_success(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
         monkeypatch.chdir(workspace)
@@ -83,12 +83,12 @@ def test_analyze_image_from_ollama_local_path_success(monkeypatch):
 
         assert code == 0
         assert out["status"] == "ok"
-        assert out["executed_skill"] == "analyze-image-from-ollama"
+        assert out["executed_skill"] == "analyze-image"
         assert out["analysis"] == "Visible title: Helix"
         assert out["model_used"] == "glm-ocr"
 
 
-def test_analyze_image_from_ollama_downloads_remote_image(monkeypatch):
+def test_analyze_image_downloads_remote_image(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
         monkeypatch.chdir(workspace)
@@ -123,7 +123,7 @@ def test_analyze_image_from_ollama_downloads_remote_image(monkeypatch):
         assert downloads, "expected downloaded image in workspace"
 
 
-def test_analyze_image_from_ollama_reports_unavailable_service(monkeypatch):
+def test_analyze_image_reports_unavailable_service(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
         monkeypatch.chdir(workspace)
@@ -154,7 +154,7 @@ def test_analyze_image_from_ollama_reports_unavailable_service(monkeypatch):
         assert "ollama serve" in out["message"]
 
 
-def test_analyze_image_from_ollama_rejects_empty_response(monkeypatch):
+def test_analyze_image_rejects_empty_response(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         workspace = Path(td)
         monkeypatch.chdir(workspace)
@@ -185,8 +185,8 @@ def test_analyze_image_from_ollama_rejects_empty_response(monkeypatch):
 
 
 if __name__ == "__main__":
-    test_analyze_image_from_ollama_local_path_success()  # type: ignore[misc]
-    test_analyze_image_from_ollama_downloads_remote_image()  # type: ignore[misc]
-    test_analyze_image_from_ollama_reports_unavailable_service()  # type: ignore[misc]
-    test_analyze_image_from_ollama_rejects_empty_response()  # type: ignore[misc]
-    print("\n✅ All analyze-image-from-ollama script tests passed!")
+    test_analyze_image_local_path_success()  # type: ignore[misc]
+    test_analyze_image_downloads_remote_image()  # type: ignore[misc]
+    test_analyze_image_reports_unavailable_service()  # type: ignore[misc]
+    test_analyze_image_rejects_empty_response()  # type: ignore[misc]
+    print("\n✅ All analyze-image script tests passed!")

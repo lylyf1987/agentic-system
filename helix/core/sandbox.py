@@ -18,12 +18,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from helix.core.local_model_service import (
-    has_active_runtimes,
-    register_active_runtime,
-    service_runtime_dir,
-    unregister_active_runtime,
-)
 from helix.core.state import Turn
 
 
@@ -32,7 +26,7 @@ _SANDBOX_DOCKERFILE = _DOCKER_BUILD_ROOT / "exec-sandbox.Dockerfile"
 _SEARXNG_IMAGE = "docker.io/searxng/searxng:latest"
 _DOCKER_INFO_TIMEOUT = 5
 _DOCKER_BUILD_TIMEOUT = int(os.environ.get("AGENTIC_DOCKER_BUILD_TIMEOUT", "1800"))
-_DOCKER_TIMEOUT = int(os.environ.get("AGENTIC_DOCKER_SANDBOX_TIMEOUT", "600"))
+_DOCKER_TIMEOUT = int(os.environ.get("AGENTIC_DOCKER_SANDBOX_TIMEOUT", "1800"))
 _DOCKER_MEMORY = os.environ.get("AGENTIC_DOCKER_SANDBOX_MEMORY", "2g")
 _DOCKER_CPUS = os.environ.get("AGENTIC_DOCKER_SANDBOX_CPUS", "2.0")
 _DOCKER_PIDS = os.environ.get("AGENTIC_DOCKER_SANDBOX_PIDS", "256")
@@ -52,6 +46,81 @@ _PASS_ENV_PREFIXES = (
     "OPENAI_COMPAT_",
     "OPENAI_API_KEY",
 )
+
+
+def _helix_home() -> Path:
+    override = str(os.environ.get("HELIX_HOME", "")).strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return (Path.home() / ".helix").resolve()
+
+
+def _runtime_root() -> Path:
+    return _helix_home() / "runtime"
+
+
+def _service_runtime_dir(service_name: str) -> Path:
+    return _runtime_root() / "services" / service_name
+
+
+def _active_runtime_dir() -> Path:
+    return _runtime_root() / "active-runtimes"
+
+
+def _runtime_marker_path(pid: int | None = None) -> Path:
+    token = int(pid or os.getpid())
+    return _active_runtime_dir() / f"{token}.json"
+
+
+def _prune_stale_runtime_markers() -> None:
+    markers = _active_runtime_dir()
+    if not markers.exists():
+        return
+    for marker in markers.glob("*.json"):
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            marker.unlink(missing_ok=True)
+            continue
+        try:
+            pid = int(payload.get("pid"))
+        except (TypeError, ValueError):
+            marker.unlink(missing_ok=True)
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            marker.unlink(missing_ok=True)
+        except PermissionError:
+            continue
+
+
+def _register_active_runtime(*, workspace: Path, session_id: str) -> Path:
+    markers = _active_runtime_dir()
+    markers.mkdir(parents=True, exist_ok=True)
+    _prune_stale_runtime_markers()
+    marker = _runtime_marker_path()
+    payload = {
+        "pid": os.getpid(),
+        "workspace": str(Path(workspace).expanduser().resolve()),
+        "session_id": str(session_id or "session").strip() or "session",
+        "started_at": time.time(),
+    }
+    marker.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return marker
+
+
+def _unregister_active_runtime(marker_path: Path | None) -> None:
+    if marker_path is not None:
+        marker_path.unlink(missing_ok=True)
+
+
+def _has_active_runtimes() -> bool:
+    _prune_stale_runtime_markers()
+    markers = _active_runtime_dir()
+    if not markers.exists():
+        return False
+    return any(markers.glob("*.json"))
 
 
 def docker_is_available() -> tuple[bool, str]:
@@ -295,7 +364,7 @@ class DockerSandboxExecutor:
         self.network_name = _GLOBAL_NETWORK_NAME
         self.cache_dir = self.workspace / ".runtime" / "docker" / "cache"
         self.searxng_name = _GLOBAL_SEARXNG_NAME
-        self.searxng_runtime_dir = service_runtime_dir("searxng")
+        self.searxng_runtime_dir = _service_runtime_dir("searxng")
         self.searxng_config_dir = self.searxng_runtime_dir / "config"
         self.searxng_data_dir = self.searxng_runtime_dir / "data"
         requested = str(searxng_base_url or "").strip()
@@ -360,19 +429,19 @@ class DockerSandboxExecutor:
     def _register_active_session(self) -> None:
         if self._session_registered:
             return
-        self._runtime_marker_path = register_active_runtime(
+        self._runtime_marker_path = _register_active_runtime(
             workspace=self.workspace,
             session_id=self.session_id,
         )
         self._session_registered = True
 
     def _unregister_active_session(self) -> None:
-        unregister_active_runtime(self._runtime_marker_path)
+        _unregister_active_runtime(self._runtime_marker_path)
         self._runtime_marker_path = None
         self._session_registered = False
 
     def _has_active_sessions(self) -> bool:
-        return has_active_runtimes()
+        return _has_active_runtimes()
 
     def _ensure_image(self) -> None:
         inspect = self._run_docker(["image", "inspect", self.image_tag], check=False)

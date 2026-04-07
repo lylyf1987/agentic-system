@@ -12,9 +12,25 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-_EXECUTED_SKILL = "generate-image-from-pytorch"
-_MODEL_ID = "Tongyi-MAI/Z-Image-Turbo"
-_TASK_TYPE = "image_generation"
+_EXECUTED_SKILL = "generate-image"
+_PHASE = "generate"
+_SKILL_ROOT = Path(__file__).resolve().parent.parent
+_MODEL_SPEC_PATH = _SKILL_ROOT / "model_spec.json"
+_TASK_TYPE = "text_to_image"
+
+
+def _load_model_spec() -> dict[str, Any]:
+    return json.loads(_MODEL_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def _model_used() -> str:
+    spec = _load_model_spec()
+    source = spec.get("source") if isinstance(spec, dict) else {}
+    if isinstance(source, dict):
+        token = str(source.get("repo_id", "")).strip()
+        if token:
+            return token
+    return str(spec.get("id", "")).strip() or "model"
 
 
 def _utc_now_compact() -> str:
@@ -24,10 +40,11 @@ def _utc_now_compact() -> str:
 def _err(*, prompt: str, output_path: str, error_code: str, message: str) -> dict[str, Any]:
     return {
         "executed_skill": _EXECUTED_SKILL,
+        "phase": _PHASE,
         "status": "error",
         "prompt": prompt,
         "output_path": output_path,
-        "model_used": _MODEL_ID,
+        "model_used": _model_used(),
         "error_code": error_code,
         "message": message,
     }
@@ -36,10 +53,11 @@ def _err(*, prompt: str, output_path: str, error_code: str, message: str) -> dic
 def _ok(*, prompt: str, output_path: str, message: str) -> dict[str, Any]:
     return {
         "executed_skill": _EXECUTED_SKILL,
+        "phase": _PHASE,
         "status": "ok",
         "prompt": prompt,
         "output_path": output_path,
-        "model_used": _MODEL_ID,
+        "model_used": _model_used(),
         "error_code": "",
         "message": message,
     }
@@ -75,7 +93,7 @@ def _choose_output_path(output_path: str, output_dir: str) -> str:
 
     out_dir = str(output_dir or "").strip() or "generated_images"
     rel_dir = Path(_resolve_relative_path(out_dir))
-    safe_model = re.sub(r"[^a-zA-Z0-9._-]+", "-", _MODEL_ID).strip("-") or "model"
+    safe_model = re.sub(r"[^a-zA-Z0-9._-]+", "-", _model_used()).strip("-") or "model"
     return str(rel_dir / f"image_{safe_model}_{_utc_now_compact()}.png")
 
 
@@ -134,9 +152,11 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             message=str(exc),
         ), 1
 
+    timeout = max(5, int(args.timeout))
     payload = {
         "task_type": _TASK_TYPE,
-        "model_id": _MODEL_ID,
+        "model_spec": _load_model_spec(),
+        "request_timeout_seconds": timeout,
         "workspace_root": str(Path.cwd().resolve()),
         "inputs": {
             "prompt": prompt,
@@ -144,7 +164,6 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "output_path": output_path,
         },
     }
-    timeout = max(5, int(args.timeout))
     try:
         status_code, parsed, body = _post_json(
             f"{base_url}/infer",
@@ -161,28 +180,32 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         ), 1
 
     parsed = parsed or {}
+    outputs = parsed.get("outputs")
+    if not isinstance(outputs, dict):
+        outputs = {}
+    resolved_output_path = str(outputs.get("output_path", output_path)).strip()
     if status_code != 200 or parsed.get("status") != "ok":
         return _err(
             prompt=prompt,
-            output_path=str(parsed.get("output_path", "")).strip(),
+            output_path=resolved_output_path if status_code != 200 else "",
             error_code=str(parsed.get("error_code", "")).strip() or "image_generation_failed",
             message=str(parsed.get("message", "")).strip() or body.strip() or "image generation failed",
         ), 1
 
     return _ok(
         prompt=prompt,
-        output_path=str(parsed.get("output_path", output_path)).strip(),
+        output_path=resolved_output_path,
         message=str(parsed.get("message", "")).strip() or "image generation complete",
     ), 0
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate an image with the built-in local PyTorch backend.")
+    parser = argparse.ArgumentParser(description="Generate an image with the built-in local MLX backend.")
     parser.add_argument("--prompt", default="")
     parser.add_argument("--size", default="1024x1024")
     parser.add_argument("--output-path", default="")
     parser.add_argument("--output-dir", default="generated_images")
-    parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--timeout", type=int, default=1200)
     return parser.parse_args()
 
 

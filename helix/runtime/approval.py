@@ -1,16 +1,26 @@
 """Approval gates and policies for the Environment."""
 
 import hashlib
+import json
 import re
 from typing import Callable, Optional
 
 from helix.core.action import Action
 from helix.core.environment import ApprovalResult, Environment
 from helix.core.state import Turn
-from helix.runtime.display import write_framed_text
+from helix.runtime.display import iter_exec_payload_items, write_framed_text
 
 
 PromptFn = Callable[[str], str]
+
+_APPROVAL_LABELS = {
+    "job_name": "Job Name",
+    "code_type": "Type",
+    "script_path": "Script Path",
+    "script": "Script",
+    "script_args": "Args",
+    "timeout_seconds": "Timeout Seconds",
+}
 
 
 class ApprovalPolicy:
@@ -39,10 +49,7 @@ class ApprovalPolicy:
         """Hash the full payload for exact-match approval."""
         content = (
             profile +
-            str(payload.get("code_type", "")) +
-            str(payload.get("script", "")) +
-            str(payload.get("script_path", "")) +
-            str(payload.get("script_args", ""))
+            json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str)
         ).encode("utf-8")
         return hashlib.md5(content).hexdigest()
 
@@ -85,15 +92,15 @@ class ApprovalPolicy:
             return True
 
         # Prompt user
-        details = [
-            "runtime> Action requires approval:",
-            f"Type: {action.payload.get('code_type', 'bash')}",
-        ]
-        if "script" in action.payload:
-            details.append(f"Script:\n{action.payload['script']}")
-        elif "script_path" in action.payload:
-            details.append(f"Script Path: {action.payload['script_path']}")
-            details.append(f"Args: {action.payload.get('script_args', [])}")
+        details = ["runtime> Action requires approval:"]
+        for key, value in iter_exec_payload_items(action.payload):
+            label = _APPROVAL_LABELS.get(key, key)
+            text = str(value)
+            if "\n" in text:
+                details.append(f"{label}:")
+                details.extend(text.splitlines())
+            else:
+                details.append(f"{label}: {text}")
 
         if pattern_key:
             details.extend([

@@ -15,6 +15,7 @@ from helix.core.sandbox import docker_is_available, sandbox_executor
 from helix.core.state import Turn
 from helix.runtime.approval import ApprovalPolicy
 from helix.runtime.display import TURN_SEPARATOR
+from helix.runtime.loop import _format_agent_record
 
 
 def _docker_ready() -> bool:
@@ -284,6 +285,102 @@ def test_approval_prompt_prints_separator_before_input():
     print("  Approval separator before input OK")
 
 
+def test_approval_prompt_shows_timeout_seconds_and_job_name():
+    captured = StringIO()
+
+    def fake_prompt(prompt_text: str) -> str:
+        print(prompt_text, end="")
+        return "y"
+
+    policy = ApprovalPolicy(mode="controlled", prompt=fake_prompt)
+    env = Environment(workspace=Path("."))
+    action = Action(
+        response="",
+        type="exec",
+        payload={
+            "job_name": "prepare-video-model-retry",
+            "code_type": "python",
+            "script_path": "skills/all-agents/generate-video/scripts/prepare_model.py",
+            "script_args": ["--timeout", "1200"],
+            "timeout_seconds": 1800,
+        },
+    )
+
+    with patch("sys.stdout", captured):
+        assert policy(env, action) is True
+
+    output = captured.getvalue()
+    assert "Job Name: prepare-video-model-retry" in output
+    assert "Script Path: skills/all-agents/generate-video/scripts/prepare_model.py" in output
+    assert "Args: ['--timeout', '1200']" in output
+    assert "Timeout Seconds: 1800" in output
+    print("  Approval prompt shows full exec payload OK")
+
+
+def test_approval_policy_exact_match_includes_timeout_seconds():
+    prompts: list[str] = []
+    choices = iter(["s", "n"])
+
+    def fake_prompt(_prompt: str) -> str:
+        prompts.append("prompted")
+        return next(choices)
+
+    policy = ApprovalPolicy(mode="controlled", prompt=fake_prompt)
+    env = Environment(workspace=Path("."))
+
+    action1 = Action(
+        response="",
+        type="exec",
+        payload={
+            "code_type": "python",
+            "script_path": "skills/all-agents/generate-video/scripts/prepare_model.py",
+            "script_args": ["--timeout", "1200"],
+            "timeout_seconds": 1800,
+        },
+    )
+    assert policy(env, action1) is True
+
+    action2 = Action(
+        response="",
+        type="exec",
+        payload={
+            "code_type": "python",
+            "script_path": "skills/all-agents/generate-video/scripts/prepare_model.py",
+            "script_args": ["--timeout", "1200"],
+            "timeout_seconds": 2400,
+        },
+    )
+    result = policy(env, action2)
+    assert isinstance(result, Turn)
+    assert "denied by requester" in result.content.lower()
+    assert len(prompts) == 2
+    print("  Approval exact match includes timeout_seconds OK")
+
+
+def test_format_agent_record_includes_all_exec_payload_fields():
+    action = Action(
+        response="Preparing model",
+        type="exec",
+        payload={
+            "job_name": "prepare-video-model-retry",
+            "code_type": "python",
+            "script_path": "skills/all-agents/generate-video/scripts/prepare_model.py",
+            "script_args": ["--timeout", "1200"],
+            "timeout_seconds": 1800,
+            "retry_count": 1,
+        },
+    )
+
+    record = _format_agent_record(action)
+    assert "[action_input]" in record
+    assert "  job_name: prepare-video-model-retry" in record
+    assert "  script_args: ['--timeout', '1200']" in record
+    assert "  timeout_seconds: 1800" in record
+    assert "  retry_count: 1" in record
+    assert record.index("  timeout_seconds: 1800") < record.index("  retry_count: 1")
+    print("  Agent record shows full exec payload OK")
+
+
 def test_approval_policy_non_exec_passthrough():
     policy = ApprovalPolicy(mode="controlled")
     env = Environment(workspace=Path("."))
@@ -333,6 +430,9 @@ if __name__ == "__main__":
     test_approval_policy_uses_injected_prompt_instead_of_raw_input()
     test_approval_policy_keyboard_interrupt_cancels()
     test_approval_prompt_prints_separator_before_input()
+    test_approval_prompt_shows_timeout_seconds_and_job_name()
+    test_approval_policy_exact_match_includes_timeout_seconds()
+    test_format_agent_record_includes_all_exec_payload_fields()
     test_approval_policy_non_exec_passthrough()
 
     print("\n=== Environment Integration ===")

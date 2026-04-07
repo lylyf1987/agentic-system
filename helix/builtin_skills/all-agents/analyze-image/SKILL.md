@@ -1,6 +1,6 @@
 ---
-name: Analyze Image From Ollama
-handler: scripts/analyze_image_from_ollama.py
+name: Analyze Image
+handler: scripts/analyze_image.py
 description: Analyze a workspace-local image with the built-in Ollama GLM-OCR backend.
 required_tools: exec
 recommended_tools: exec
@@ -29,7 +29,7 @@ Skip when:
 - `script_mode: single`
 - This is a backend-owned capability skill with one primary deterministic runtime script.
 - Core Agent should call this skill directly instead of passing provider or model config through Helix CLI.
-- Script path: `skills/all-agents/analyze-image-from-ollama/scripts/analyze_image_from_ollama.py`
+- Script path: `skills/all-agents/analyze-image/scripts/analyze_image.py`
 
 # Procedure
 
@@ -71,7 +71,7 @@ Example using a local file:
 ```json
 {
   "code_type": "python",
-  "script_path": "skills/all-agents/analyze-image-from-ollama/scripts/analyze_image_from_ollama.py",
+  "script_path": "skills/all-agents/analyze-image/scripts/analyze_image.py",
   "script_args": [
     "--image-path", "assets/banner.jpg",
     "--query", "Extract the visible title text and key layout regions"
@@ -84,7 +84,7 @@ Example using a remote image:
 ```json
 {
   "code_type": "python",
-  "script_path": "skills/all-agents/analyze-image-from-ollama/scripts/analyze_image_from_ollama.py",
+  "script_path": "skills/all-agents/analyze-image/scripts/analyze_image.py",
   "script_args": [
     "--image-url", "https://example.com/sample-doc.png",
     "--query", "Extract the visible text and describe the document structure"
@@ -96,7 +96,7 @@ Example using a remote image:
 
 ```json
 {
-  "executed_skill": "analyze-image-from-ollama",
+  "executed_skill": "analyze-image",
   "status": "ok|error",
   "image_source": "...",
   "analysis": "...",
